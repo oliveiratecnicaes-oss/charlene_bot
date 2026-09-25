@@ -1,4 +1,4 @@
-// Charlene Bot - Versão simples para Vercel
+// Charlene Bot - Versão CommonJS (compatível com Vercel)
 const TELEGRAM_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -30,8 +30,8 @@ async function getChamados() {
   return res.json();
 }
 
-// Handler principal do Vercel
-export default async function handler(req, res) {
+// Handler principal do Vercel (CommonJS)
+module.exports = async function handler(req, res) {
   // GET = teste no navegador
   if (req.method === 'GET') {
     return res.status(200).json({ status: 'Charlene online! 🤖' });
@@ -40,16 +40,21 @@ export default async function handler(req, res) {
   // POST = webhook do Telegram
   if (req.method === 'POST') {
     try {
+      console.log('📩 Recebido:', JSON.stringify(req.body));
+      
       const update = req.body;
       const message = update.message;
 
       if (!message) {
+        console.log('⚠️ Sem mensagem no update');
         return res.status(200).json({ status: 'ok' });
       }
 
       const chatId = message.chat.id;
       const text = message.text || '';
       const userName = message.from.first_name || 'usuário';
+
+      console.log(`💬 Mensagem de ${userName}: ${text}`);
 
       // /start
       if (text === '/start') {
@@ -95,6 +100,7 @@ export default async function handler(req, res) {
             await sendMessage(chatId, 'Nenhum chamado encontrado.');
           }
         } catch (err) {
+          console.error('Erro ao buscar chamados:', err);
           await sendMessage(chatId, 'Erro ao buscar chamados. Tente novamente.');
         }
         return res.status(200).json({ status: 'ok' });
@@ -119,7 +125,7 @@ export default async function handler(req, res) {
       return res.status(200).json({ status: 'ok' });
 
     } catch (error) {
-      console.error('Erro:', error);
+      console.error('❌ Erro no handler:', error);
       return res.status(500).json({ error: error.message });
     }
   }
