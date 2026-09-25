@@ -1,0 +1,13 @@
+{
+  "name": "charlene-bot",
+  "version": "1.0.0",
+  "description": "Assistente Charlene - Telegram + Supabase",
+  "main": "index.js",
+  "scripts": {
+    "dev": "vercel dev"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.39.0",
+    "node-telegram-bot-api": "^0.64.0"
+  }
+}
