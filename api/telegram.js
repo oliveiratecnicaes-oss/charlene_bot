@@ -9,59 +9,78 @@ const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
 // Inicializar Supabase
 const supabase = createClient(supabaseUrl, supabaseKey);
 
-// Inicializar bot
+// Inicializar bot (sem polling, só webhook)
 const bot = new TelegramBot(token, { polling: false });
 
-// Handler principal
-export default async function handler(req, res) {
-  // Verificar se é webhook do Telegram
-  if (req.method === 'POST') {
-    const update = req.body;
-    
-    // Verificar se tem mensagem
-    if (update.message) {
-      const chatId = update.message.chat.id;
-      const text = update.message.text || '';
-      const from = update.message.from;
-      
-      // Processar comando
-      await processMessage(chatId, text, from);
-    }
-    
-    res.status(200).json({ status: 'ok' });
-  } else {
-    res.status(200).json({ status: 'Charlene online!' });
+// Handler do Vercel
+module.exports = async function handler(req, res) {
+  // Aceitar qualquer método (GET pra teste, POST pra webhook)
+  if (req.method === 'GET') {
+    return res.status(200).json({ status: 'Charlene online! 🤖' });
   }
+
+  if (req.method === 'POST') {
+    try {
+      const update = req.body;
+      
+      // Processar o update via webhook
+      bot.processUpdate(update);
+      
+      return res.status(200).json({ status: 'ok' });
+    } catch (error) {
+      console.error('Erro:', error);
+      return res.status(500).json({ error: error.message });
+    }
+  }
+
+  return res.status(405).json({ error: 'Método não permitido' });
 }
 
-// Processar mensagens
-async function processMessage(chatId, text, from) {
+// Processar mensagens (listener do bot)
+bot.on('message', async (msg) => {
+  const chatId = msg.chat.id;
+  const text = msg.text || '';
+  const from = msg.from;
   const userName = from.first_name || 'usuário';
-  
-  // Comando /start
-  if (text === '/start') {
-    await bot.sendMessage(chatId, `Olá ${userName}! 👋\n\nSou a Charlene, assistente da Oliveira Técnicas.\n\nPosso te ajudar com:\n• Consultar chamados\n• Ver status de serviços\n• Informações gerais\n\nDigite /ajuda para ver todos os comandos.`);
-    return;
-  }
-  
-  // Comando /ajuda
-  if (text === '/ajuda') {
-    await bot.sendMessage(chatId, `Comandos disponíveis:\n\n/start - Iniciar conversa\n/ajuda - Ver esta mensagem\n/chamados - Ver últimos chamados\n/status - Status do sistema\n\nEm breve mais funcionalidades! 🚀`);
-    return;
-  }
-  
-  // Comando /chamados
-  if (text === '/chamados') {
-    try {
-      // Buscar últimos 5 chamados do Supabase
+
+  try {
+    // Comando /start
+    if (text === '/start') {
+      await bot.sendMessage(chatId, 
+        `Olá ${userName}! 👋\n\n` +
+        `Sou a Charlene, assistente da Oliveira Técnicas.\n\n` +
+        `Posso te ajudar com:\n` +
+        `• Consultar chamados\n` +
+        `• Ver status de serviços\n` +
+        `• Informações gerais\n\n` +
+        `Digite /ajuda para ver todos os comandos.`
+      );
+      return;
+    }
+
+    // Comando /ajuda
+    if (text === '/ajuda') {
+      await bot.sendMessage(chatId, 
+        `Comandos disponíveis:\n\n` +
+        `/start - Iniciar conversa\n` +
+        `/ajuda - Ver esta mensagem\n` +
+        `/chamados - Ver últimos chamados\n` +
+        `/status - Status do sistema\n\n` +
+        `Em breve mais funcionalidades! `
+      );
+      return;
+    }
+
+    // Comando /chamados
+    if (text === '/chamados') {
       const { data, error } = await supabase
         .from('chamados')
         .select('*')
         .order('created_at', { ascending: false })
         .limit(5);
-      
+
       if (error) throw error;
-      
+
       if (data && data.length > 0) {
         let mensagem = '📋 Últimos chamados:\n\n';
         data.forEach((chamado, index) => {
@@ -73,20 +92,28 @@ async function processMessage(chatId, text, from) {
       } else {
         await bot.sendMessage(chatId, 'Nenhum chamado encontrado.');
       }
-    } catch (error) {
-      await bot.sendMessage(chatId, 'Erro ao buscar chamados. Tente novamente.');
-      console.error(error);
+      return;
     }
-    return;
-  }
-  
-  // Comando /status
-  if (text === '/status') {
-    await bot.sendMessage(chatId, '✅ Sistema operacional\n\nCharlene: Online\nSupabase: Conectado\nTelegram: Funcionando');
-    return;
-  }
-  
-  // Mensagem padrão
-  await bot.sendMessage(chatId, `Desculpe ${userName}, não entendi o comando.\n\nDigite /ajuda para ver os comandos disponíveis.`);
-}
 
+    // Comando /status
+    if (text === '/status') {
+      await bot.sendMessage(chatId, 
+        '✅ Sistema operacional\n\n' +
+        'Charlene: Online\n' +
+        'Supabase: Conectado\n' +
+        'Telegram: Funcionando'
+      );
+      return;
+    }
+
+    // Mensagem padrão
+    await bot.sendMessage(chatId, 
+      `Desculpe ${userName}, não entendi o comando.\n\n` +
+      `Digite /ajuda para ver os comandos disponíveis.`
+    );
+
+  } catch (error) {
+    console.error('Erro ao processar mensagem:', error);
+    await bot.sendMessage(chatId, 'Ops! Algo deu errado. Tente novamente em instantes.');
+  }
+});
