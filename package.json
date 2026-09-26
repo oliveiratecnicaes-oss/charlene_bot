@@ -1,9 +1,12 @@
 {
   "name": "charlene-bot",
   "version": "1.0.0",
-  "description": "Assistente Charlene - Telegram + Supabase",
-  "main": "api/telegram.js",
+  "private": true,
+  "scripts": {
+    "dev": "node telegram.js"
+  },
   "dependencies": {
-    "node-fetch": "^2.7.0"
+    "@supabase/supabase-js": "^2.39.0",
+    "node-telegram-bot-api": "^0.64.0"
   }
 }
