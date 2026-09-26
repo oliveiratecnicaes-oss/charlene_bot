@@ -1,0 +1,20 @@
+{
+  "version": 2,
+  "functions": {
+    "api/telegram.js": {
+      "runtime": "nodejs18.x"
+    }
+  },
+  "routes": [
+    {
+      "src": "/api/telegram",
+      "methods": ["GET", "POST", "OPTIONS"],
+      "dest": "/api/telegram.js",
+      "headers": {
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+        "Access-Control-Allow-Headers": "Content-Type"
+      }
+    }
+  ]
+}
