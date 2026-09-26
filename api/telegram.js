@@ -16,7 +16,20 @@ module.exports = async function handler(req, res) {
   }
 
   try {
-    const update = req.body;
+    // Garante que temos o body, lendo manualmente se necessario
+    let update = req.body;
+    
+    if (!update && req.on) {
+      const chunks = [];
+      for await (const chunk of req) {
+        chunks.push(chunk);
+      }
+      const rawBody = Buffer.concat(chunks).toString();
+      if (rawBody) {
+        update = JSON.parse(rawBody);
+      }
+    }
+
     console.log('Recebido:', JSON.stringify(update));
 
     if (!update || !update.message) {
@@ -25,7 +38,7 @@ module.exports = async function handler(req, res) {
 
     const chatId = update.message.chat.id;
     const text = update.message.text || '';
-    const firstName = update.message.from.first_name || 'usuario';
+    const firstName = update.message.from?.first_name || 'usuario';
 
     console.log('Mensagem de ' + firstName + ': ' + text);
 
@@ -40,6 +53,12 @@ module.exports = async function handler(req, res) {
     }
 
     const token = process.env.TELEGRAM_BOT_TOKEN;
+    
+    if (!token) {
+      console.error('TELEGRAM_BOT_TOKEN nao configurado');
+      return res.status(200).json({ ok: true });
+    }
+
     const url = 'https://api.telegram.org/bot' + token + '/sendMessage';
 
     const response = await fetch(url, {
@@ -58,6 +77,7 @@ module.exports = async function handler(req, res) {
 
   } catch (error) {
     console.error('Erro:', error);
+    // Sempre retorna 200 para o Telegram nao parar de enviar
     return res.status(200).json({ ok: false, error: error.message });
-  }
+  }      
 };
