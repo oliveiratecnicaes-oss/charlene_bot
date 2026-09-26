@@ -2,12 +2,12 @@
 // Webhook do Charlene Assistente para Vercel
 
 module.exports = async function handler(req, res) {
-  // Headers CORS para evitar bloqueios
+  // CORS (não prejudica, mas não é o problema principal)
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
 
-  // Responder requisições OPTIONS imediatamente
+  // Responder OPTIONS imediatamente
   if (req.method === 'OPTIONS') {
     return res.status(200).end();
   }
@@ -17,7 +17,7 @@ module.exports = async function handler(req, res) {
     return res.status(200).json({ status: 'Charlene online! 🤖' });
   }
 
-  // POST = webhook do Telegram
+  // Só aceita POST
   if (req.method !== 'POST') {
     return res.status(405).json({ error: 'Método não permitido' });
   }
@@ -41,16 +41,14 @@ module.exports = async function handler(req, res) {
 
     let replyText = '';
 
-    // Comandos do bot
     if (text === '/start') {
       replyText = `Olá, ${firstName}! 👋\n\nSou a Charlene, sua assistente. Como posso ajudar?`;
     } else if (text === '/ajuda' || text === '/help') {
-      replyText = `📋 Comandos disponíveis:\n\n/start - Iniciar conversa\n/ajuda - Ver esta mensagem\n\nOu simplesmente me envie uma mensagem!`;
+      replyText = `📋 Comandos disponíveis:\n\n/start - Iniciar conversa\n/ajuda - Ver esta mensagem`;
     } else {
       replyText = `Você disse: "${text}"\n\nEstou aprendendo ainda, mas em breve responderei com mais inteligência! 🤖`;
     }
 
-    // Enviar resposta pelo Telegram
     const telegramUrl = `https://api.telegram.org/bot${process.env.TELEGRAM_BOT_TOKEN}/sendMessage`;
 
     const response = await fetch(telegramUrl, {
@@ -58,24 +56,5 @@ module.exports = async function handler(req, res) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         chat_id: chatId,
-        text: replyText,
-        parse_mode: 'HTML'
+        text: replyText
       })
-    });
-
-    const responseData = await response.json();
-
-    console.log('📤 Resposta do Telegram:', JSON.stringify(responseData));
-
-    if (!responseData.ok) {
-      console.error('❌ Erro ao enviar mensagem:', responseData);
-      return res.status(200).json({ ok: false, error: responseData });
-    }
-
-    return res.status(200).json({ ok: true });
-
-  } catch (error) {
-    console.error('❌ Erro no webhook:', error);
-    return res.status(200).json({ ok: false, error: error.message });
-  }
-};
