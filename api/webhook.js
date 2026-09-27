@@ -98,6 +98,7 @@ async function chamarGemini(historico, novaMensagem) {
 
 // ===== HANDLER PRINCIPAL DO VERCEL =====
 module.exports = async (req, res) => {
+  console.log('WEBHOOK CHARLENE V2 RODANDO - chat:', req.body?.message?.chat?.id);
   // Só aceita POST
   if (req.method !== 'POST') {
     return res.status(200).send('Charlene webhook online. Use POST.');
