@@ -1,3 +1,5 @@
+// Deploy forçado - 27/09/2026 19:25
+
 const TelegramBot = require('node-telegram-bot-api');
 const { createClient } = require('@supabase/supabase-js');
 
