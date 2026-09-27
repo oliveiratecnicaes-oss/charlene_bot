@@ -72,7 +72,7 @@ async function chamarGemini(historico, novaMensagem) {
   ];
 
   const res = await fetch(
-    `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-lite:generateContent?key=${GEMINI_API_KEY}`,
+    `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${GEMINI_API_KEY}`,
     {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -87,7 +87,13 @@ async function chamarGemini(historico, novaMensagem) {
   );
 
   const data = await res.json();
-  return data.candidates?.[0]?.content?.parts?.[0]?.text || 'Desculpa, tive um erro. Tenta de novo.';
+
+  if (!res.ok || data.error) {
+    console.error('Erro Gemini:', JSON.stringify(data, null, 2));
+    return `⚠️ Erro na IA: ${data.error?.message || 'resposta inválida'}`;
+  }
+
+  return data.candidates?.[0]?.content?.parts?.[0]?.text || '⚠️ Resposta vazia do Gemini.';
 }
 
 // ===== HANDLER PRINCIPAL DO VERCEL =====
@@ -137,7 +143,7 @@ module.exports = async (req, res) => {
     return res.status(200).send('OK');
 
   } catch (erro) {
-    console.error('Erro:', erro);
+    console.error('Erro geral:', erro);
     await bot.sendMessage(chatId, '⚠️ Tive um problema aqui. Tenta de novo em alguns segundos.');
     return res.status(200).send('OK');
   }
