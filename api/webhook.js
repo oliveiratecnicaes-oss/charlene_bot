@@ -147,4 +147,4 @@ module.exports = async (req, res) => {
     await bot.sendMessage(chatId, '⚠️ Tive um problema aqui. Tenta de novo em alguns segundos.');
     return res.status(200).send('OK');
   }
-};
+}; 
