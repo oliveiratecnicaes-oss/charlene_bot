@@ -2,9 +2,6 @@
   "name": "charlene-bot",
   "version": "1.0.0",
   "private": true,
-  "scripts": {
-    "dev": "node telegram.js"
-  },
   "dependencies": {
     "@supabase/supabase-js": "^2.39.0",
     "node-telegram-bot-api": "^0.64.0"
