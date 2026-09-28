@@ -185,7 +185,7 @@ async function getPlanoHoje(usuarioId) {
 async function salvarPlanoDoDia(usuarioId, conteudo) {
   const hoje = new Date().toISOString().split('T')[0];
   await supabase.from('plano_dia').insert([{
-    usuario_id,
+    usuario_id: usuarioId,
     data: hoje,
     conteudo,
     entregue: true
