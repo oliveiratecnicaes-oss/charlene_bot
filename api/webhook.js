@@ -73,20 +73,20 @@ async function chamarGemini(historico, novaMensagem) {
     { role: 'user', parts: [{ text: novaMensagem }] }
   ];
 
-  const res = await fetch(
+const response = await fetch(
   `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-lite:generateContent?key=${GEMINI_API_KEY}`,
-    {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        contents: messages,
-        generationConfig: {
-          maxOutputTokens: 500,
-          temperature: 0.7
-        }
-      })
-    }
-  );
+  {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      contents: [{ parts: [{ text: mensagem }] }],
+      generationConfig: {
+        temperature: 0.7,
+        maxOutputTokens: 1024
+      }
+    })
+  }
+);
 
   const data = await res.json();
 
