@@ -6,7 +6,12 @@ const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
-const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-2.0-flash-lite';
+const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-1.5-flash';
+
+// Validação das variáveis
+if (!SUPABASE_URL || !SUPABASE_URL.startsWith('https://') || SUPABASE_URL.endsWith('/')) {
+  console.error('⚠️ SUPABASE_URL inválida:', SUPABASE_URL);
+}
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
 const bot = new TelegramBot(BOT_TOKEN, { polling: false });
@@ -23,24 +28,11 @@ MISSÃO:
 - Aprenda com cada conversa e use isso para propor caminhos de maior receita.
 - Valores (Deus, família) importam, mas no contexto de trabalho a régua é: LUCRO E RENDIMENTO.
 
-REGRAS DE RENDA:
-1. Sempre que o Diego falar de trabalho, pergunta: "isso você já cobra por isso hoje?"
-2. Toda skill que ele mencionar, pergunte: "como isso vira serviço vendável?"
-3. Toda ideia, responda antes do entusiasmo: "essa ideia tem cliente? ele pagaria hoje?"
-4. Liste oportunidades de vender a mesma habilidade para fora da empresa dele.
-5. Nunca deixe ele terminar a conversa sem uma próxima ação que aponte para dinheiro.
-
-VALORES (ordem de prioridade):
+HIERARQUIA DE PRIORIDADES:
 1. Deus — fé, espiritualidade, clareza pela Palavra.
 2. Família — tempo de qualidade, presença real.
 3. Saúde — treino diário, atividade física, qualidade de vida. Sem isso, nada funciona.
 4. Negócios — lucro, renda, prosperidade.
-
-REGRAS:
-- Nunca sugira algo que comprometa treino ou família em nome de trabalho.
-- Se o Diego estiver enrolando e pulando treino, cobre.
-- Se ele estiver trabalhando até tarde demais, alerte.
-- Lucro é prioridade no trabalho, mas saúde e família são prioridade de vida.
 
 PERSONALIDADE:
 - Direta, prática, sem enrolação.
@@ -48,13 +40,21 @@ PERSONALIDADE:
 - Acolhedora quando o assunto é família, saúde ou fé.
 - Anti-TDAH: respostas curtas, plano em mini-passos.
 - Sócia, não robô.
+- Nunca sugira algo que comprometa treino ou família em nome de trabalho.
 
-REGRAS:
+REGRAS DE RENDA:
+1. Sempre que o Diego falar de trabalho, pergunta: "isso você já cobra por isso hoje?"
+2. Toda skill que ele mencionar, pergunte: "como isso vira serviço vendável?"
+3. Toda ideia, responda antes do entusiasmo: "essa ideia tem cliente? ele pagaria hoje?"
+4. Liste oportunidades de vender a mesma habilidade para fora da empresa dele.
+5. Nunca deixe ele terminar a conversa sem uma próxima ação que aponte para dinheiro.
+
+REGRAS GERAIS:
 - Nunca invente dados. Se não souber, diga que vai verificar.
 - Quando o Diego pedir algo operacional, use as ferramentas disponíveis.
 - Quando ele viajar em ideias, seja honesta: "cala a boca, não viaja, foca".
-- Sempre que possível, sugira a próxima ação que gera dinheiro ou liberdade.
 - Responda em português brasileiro.
+- Use formatação HTML simples: <b>negrito</b>, <i>itálico</i>, <code>código</code>. NÃO use asteriscos.
 
 COMANDOS QUE VOCÊ ENTENDE:
 - /diagnostico — mostra o estado atual do sistema.
@@ -249,6 +249,16 @@ async function chamarGemini(contents, temperature = 0.7) {
   return data.candidates?.[0]?.content?.parts?.[0]?.text || '⚠️ Resposta vazia do Gemini.';
 }
 
+// ===== FUNÇÃO: LIMPAR MARKDOWN QUEBRADO =====
+function limparMarkdown(texto) {
+  if (!texto) return '';
+  // Remove asteriscos soltos que quebram o parse do Telegram
+  return texto
+    .replace(/\*{3,}/g, '')
+    .replace(/_{3,}/g, '')
+    .replace(/`{3,}/g, '');
+}
+
 function buildContext(perfil, aprendizados, ideias) {
   let txt = `\n\n--- CONTEXTO DO DIEGO ---\n`;
   txt += `Habilidades: ${(perfil.dados?.habilidades || []).join(', ') || 'ainda não registradas'}\n`;
@@ -280,57 +290,57 @@ async function cmdDiagnostico(chatId, usuarioId) {
   const plano = await getPlanoHoje(usuarioId);
   const totalMsgs = await getContagemMensagens(usuarioId);
 
-  let texto = `🔍 *DIAGNÓSTICO DA CHARLENE*\n\n`;
-  texto += `*Modelo Gemini:* \`${GEMINI_MODEL}\`\n`;
-  texto += `*Variáveis configuradas:* TELEGRAM_BOT_TOKEN, SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, GEMINI_API_KEY, GEMINI_MODEL\n\n`;
-  texto += `*Tabelas no Supabase:*\n`;
+  let texto = `🔍 <b>DIAGNÓSTICO DA CHARLENE</b>\n\n`;
+  texto += `<b>Modelo Gemini:</b> <code>${GEMINI_MODEL}</code>\n`;
+  texto += `<b>Variáveis configuradas:</b> TELEGRAM_BOT_TOKEN, SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, GEMINI_API_KEY, GEMINI_MODEL\n\n`;
+  texto += `<b>Tabelas no Supabase:</b>\n`;
   for (const [tabela, cols] of Object.entries(colunasPorTabela)) {
     texto += `• ${tabela}: ${cols.map(c => c.column_name).join(', ') || 'sem colunas'}\n`;
   }
-  texto += `\n*Perfil do Diego:*\n`;
+  texto += `\n<b>Perfil do Diego:</b>\n`;
   texto += `• Nome: ${perfil.nome || 'Diego'}\n`;
   texto += `• Habilidades: ${(perfil.dados?.habilidades || []).length} registradas\n`;
   texto += `• Limites: ${(perfil.dados?.limites || []).length} registrados\n`;
   texto += `• Sonhos: ${(perfil.dados?.sonhos || []).length} registrados\n`;
   texto += `• Valores: ${(perfil.dados?.valores || []).join(' > ')}\n\n`;
-  texto += `*Aprendizados recentes:* ${aprendizados.length}\n`;
+  texto += `<b>Aprendizados recentes:</b> ${aprendizados.length}\n`;
   if (aprendizados.length) {
     texto += aprendizados.map(a => `• ${a.insight.slice(0,60)}`).join('\n') + '\n\n';
   }
-  texto += `*Ideias pendentes:* ${ideias.length}\n`;
+  texto += `<b>Ideias pendentes:</b> ${ideias.length}\n`;
   if (ideias.length) {
     texto += ideias.map(i => `• ${i.titulo}: ${i.descricao?.slice(0,60)}`).join('\n') + '\n\n';
   }
-  texto += `*Plano de hoje:* ${plano ? '✅ Entregue' : '❌ Ainda não gerado'}\n`;
-  texto += `*Total de mensagens trocadas:* ${totalMsgs}\n\n`;
-  texto += `_Copie e cole esse diagnóstico no chat com o desenvolvedor._`;
+  texto += `<b>Plano de hoje:</b> ${plano ? '✅ Entregue' : '❌ Ainda não gerado'}\n`;
+  texto += `<b>Total de mensagens trocadas:</b> ${totalMsgs}\n\n`;
+  texto += `<i>Copie e cole esse diagnóstico no chat com o desenvolvedor.</i>`;
 
-  await bot.sendMessage(chatId, texto, { parse_mode: 'Markdown' });
+  await bot.sendMessage(chatId, texto, { parse_mode: 'HTML' });
 }
 
 async function cmdMemoria(chatId, usuarioId) {
   const perfil = await getOrCreatePerfil(usuarioId, chatId);
-  let texto = `🧠 *MEMÓRIA DA CHARLENE*\n\n`;
-  texto += `*Quem é o Diego:* ${perfil.nome || 'Diego'}\n\n`;
-  texto += `*Habilidades:*\n${(perfil.dados?.habilidades || []).map(h => `• ${h}`).join('\n') || '_nenhuma registrada_'}\n\n`;
-  texto += `*Limites:*\n${(perfil.dados?.limites || []).map(l => `• ${l}`).join('\n') || '_nenhum registrado_'}\n\n`;
-  texto += `*Sonhos:*\n${(perfil.dados?.sonhos || []).map(s => `• ${s}`).join('\n') || '_nenhum registrado_'}\n\n`;
-  texto += `*Valores:* ${(perfil.dados?.valores || []).join(' > ')}\n\n`;
-  texto += `*Notas:*\n${perfil.dados?.notas || '_nenhuma_'}\n\n`;
-  texto += `_Para atualizar, fale: "Charlene, lembre que eu sei fazer X" ou "atualize minha memória"._`;
-  await bot.sendMessage(chatId, texto, { parse_mode: 'Markdown' });
+  let texto = `🧠 <b>MEMÓRIA DA CHARLENE</b>\n\n`;
+  texto += `<b>Quem é o Diego:</b> ${perfil.nome || 'Diego'}\n\n`;
+  texto += `<b>Habilidades:</b>\n${(perfil.dados?.habilidades || []).map(h => `• ${h}`).join('\n') || '<i>nenhuma registrada</i>'}\n\n`;
+  texto += `<b>Limites:</b>\n${(perfil.dados?.limites || []).map(l => `• ${l}`).join('\n') || '<i>nenhum registrado</i>'}\n\n`;
+  texto += `<b>Sonhos:</b>\n${(perfil.dados?.sonhos || []).map(s => `• ${s}`).join('\n') || '<i>nenhum registrado</i>'}\n\n`;
+  texto += `<b>Valores:</b> ${(perfil.dados?.valores || []).join(' > ')}\n\n`;
+  texto += `<b>Notas:</b>\n${perfil.dados?.notas || '<i>nenhuma</i>'}\n\n`;
+  texto += `<i>Para atualizar, fale: "Charlene, lembre que eu sei fazer X" ou "atualize minha memória".</i>`;
+  await bot.sendMessage(chatId, texto, { parse_mode: 'HTML' });
 }
 
 async function cmdIdeia(chatId, usuarioId, texto) {
   const descricao = texto.replace(/^\/ideia\s*/i, '').trim();
   if (!descricao) {
-    await bot.sendMessage(chatId, '💡 Fala a ideia depois do comando. Exemplo: `/ideia vender manutenção para condomínios`', { parse_mode: 'Markdown' });
+    await bot.sendMessage(chatId, '💡 Fala a ideia depois do comando. Exemplo: <code>/ideia vender manutenção para condomínios</code>', { parse_mode: 'HTML' });
     return;
   }
   const titulo = descricao.split('\n')[0].slice(0, 120);
   await salvarIdeia(usuarioId, titulo, descricao);
   await bot.sendMessage(chatId,
-    `💡 *Ideia registrada:*\n${titulo}\n\nA Charlene vai avaliar isso quando vocês conversarem sobre oportunidades reais.`, { parse_mode: 'Markdown' });
+    ` <b>Ideia registrada:</b>\n${titulo}\n\nA Charlene vai avaliar isso quando vocês conversarem sobre oportunidades reais.`, { parse_mode: 'HTML' });
 }
 
 async function cmdPlano(chatId, usuarioId) {
@@ -341,8 +351,9 @@ async function cmdPlano(chatId, usuarioId) {
   const promptPlano = `Com base no contexto abaixo, crie o PLANO DO DIA para o Diego.
 Seja direta, prática e em mini-passos.
 Máximo 5 ações principais, com horário sugerido se fizer sentido.
-Priorize lucro, tempo de qualidade com a família e saúde/espiritualidade.
+Priorize: lucro, treino diário, tempo com a família e espiritualidade.
 Não invente compromissos que não estão no contexto.
+Use formatação HTML simples: <b>negrito</b>, <i>itálico</i>. NÃO use asteriscos.
 
 ${buildContext(perfil, aprendizados, ideias)}`;
 
@@ -352,7 +363,7 @@ ${buildContext(perfil, aprendizados, ideias)}`;
   ]);
 
   await salvarPlanoDoDia(usuarioId, resposta);
-  await bot.sendMessage(chatId, `📅 *PLANO DO DIA*\n\n${resposta}`, { parse_mode: 'Markdown' });
+  await bot.sendMessage(chatId, `📅 <b>PLANO DO DIA</b>\n\n${limparMarkdown(resposta)}`, { parse_mode: 'HTML' });
 }
 
 async function aplicarAprendizadoNoPerfil(usuarioId, updates) {
@@ -411,7 +422,7 @@ Use arrays para adicionar itens. Se não houver nada relevante, retorne {}.`;
 
   await aplicarAprendizadoNoPerfil(usuarioId, updates);
   await salvarAprendizado(usuarioId, `Perfil atualizado a partir de: "${texto.slice(0,100)}"`, 'perfil');
-  await bot.sendMessage(chatId, '✅ *Memória atualizada.* Eu aprendi mais uma coisa sobre você.', { parse_mode: 'Markdown' });
+  await bot.sendMessage(chatId, '✅ <b>Memória atualizada.</b> Eu aprendi mais uma coisa sobre você.', { parse_mode: 'HTML' });
 }
 
 async function processarMensagemNormal(chatId, usuarioId, nome, texto) {
@@ -431,7 +442,7 @@ async function processarMensagemNormal(chatId, usuarioId, nome, texto) {
 
   const resposta = await chamarGemini(contents);
   await salvarMensagem(usuarioId, resposta, 'charlene');
-  await bot.sendMessage(chatId, resposta, { parse_mode: 'Markdown' });
+  await bot.sendMessage(chatId, limparMarkdown(resposta), { parse_mode: 'HTML' });
 }
 
 // ===== HANDLER PRINCIPAL DO VERCEL =====
@@ -456,8 +467,8 @@ async function handler(req, res) {
 
   if (texto === '/start') {
     await bot.sendMessage(chatId,
-      `🎯 *Oi, Diego!*\n\nSou a Charlene, sua parceira de negócios e sistema operacional pessoal.\n\nComandos rápidos:\n• /plano — meu plano do dia\n• /memoria — o que já sei sobre você\n• /ideia — registrar uma ideia de negócio\n• /diagnostico — relatório do sistema\n\nÉ só falar comigo.`,
-      { parse_mode: 'Markdown' }
+      `🎯 <b>Oi, Diego!</b>\n\nSou a Charlene, sua parceira de negócios e sistema operacional pessoal.\n\nComandos rápidos:\n• <code>/plano</code> — meu plano do dia\n• <code>/memoria</code> — o que já sei sobre você\n• <code>/ideia</code> — registrar uma ideia de negócio\n• <code>/diagnostico</code> — relatório do sistema\n\nÉ só falar comigo.`,
+      { parse_mode: 'HTML' }
     );
     return res.status(200).send('OK');
   }
