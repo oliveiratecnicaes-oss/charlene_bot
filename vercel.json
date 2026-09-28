@@ -1,13 +1,8 @@
 {
-  "version": 2,
-  "routes": [
+  "crons": [
     {
-      "src": "/api/webhook",
-      "dest": "/api/webhook.js"
-    },
-    {
-      "src": "/(.*)",
-      "dest": "/api/webhook.js"
+      "path": "/api/cron/plano-do-dia",
+      "schedule": "0 10 * * *"
     }
   ]
 }
