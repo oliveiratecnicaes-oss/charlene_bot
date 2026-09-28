@@ -64,7 +64,7 @@ async function salvarMensagem(usuarioId, mensagem, tipo, contexto = null) {
 
 // ===== FUNÇÃO: CHAMAR GEMINI =====
 async function chamarGemini(historico, novaMensagem) {
-  const messages = [
+  const contents = [
     { role: 'user', parts: [{ text: SYSTEM_PROMPT }] },
     ...historico.map(h => ({
       role: h.tipo === 'usuario' ? 'user' : 'model',
@@ -73,24 +73,24 @@ async function chamarGemini(historico, novaMensagem) {
     { role: 'user', parts: [{ text: novaMensagem }] }
   ];
 
-const response = await fetch(
-  `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-lite:generateContent?key=${GEMINI_API_KEY}`,
-  {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      contents: [{ parts: [{ text: mensagem }] }],
-      generationConfig: {
-        temperature: 0.7,
-        maxOutputTokens: 1024
-      }
-    })
-  }
-);
+  const response = await fetch(
+    `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-lite:generateContent?key=${GEMINI_API_KEY}`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        contents: contents,
+        generationConfig: {
+          temperature: 0.7,
+          maxOutputTokens: 1024
+        }
+      })
+    }
+  );
 
-  const data = await res.json();
+  const data = await response.json();
 
-  if (!res.ok || data.error) {
+  if (!response.ok || data.error) {
     console.error('Erro Gemini:', JSON.stringify(data, null, 2));
     return `⚠️ Erro na IA: ${data.error?.message || 'resposta inválida'}`;
   }
@@ -101,6 +101,7 @@ const response = await fetch(
 // ===== HANDLER PRINCIPAL DO VERCEL =====
 module.exports = async (req, res) => {
   console.log('WEBHOOK CHARLENE V2 RODANDO - chat:', req.body?.message?.chat?.id);
+
   // Só aceita POST
   if (req.method !== 'POST') {
     return res.status(200).send('Charlene webhook online. Use POST.');
@@ -150,4 +151,4 @@ module.exports = async (req, res) => {
     await bot.sendMessage(chatId, '⚠️ Tive um problema aqui. Tenta de novo em alguns segundos.');
     return res.status(200).send('OK');
   }
-}; 
+};
