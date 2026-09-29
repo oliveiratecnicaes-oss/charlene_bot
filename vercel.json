@@ -1,8 +1,11 @@
 {
-  "crons": [
-    {
-      "path": "/api/cron/plano-do-dia",
-      "schedule": "0 10 * * *"
+  "version": 2,
+  "functions": {
+    "api/webhook.js": {
+      "maxDuration": 30
+    },
+    "api/cron/*.js": {
+      "maxDuration": 30
     }
-  ]
+  }
 }
