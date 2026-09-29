@@ -1,424 +1,373 @@
-const TelegramBot = require('node-telegram-bot-api');
+// ============================================
+// CHARLENE BOT v2.0 - MODO DIÁLOGO DE GUERRA
+// ============================================
+
 const { createClient } = require('@supabase/supabase-js');
 
-// ===== CONFIGURAÇÃO =====
-const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
+// Configurações do ambiente
+const TELEGRAM_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
+const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
+const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-1.5-flash';
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
-const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
-const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-3.5-flash';
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
-const bot = new TelegramBot(BOT_TOKEN, { polling: false });
 
-// ===== PERSONALIDADE DA CHARLENE =====
-const SYSTEM_PROMPT = `Você é a Charlene, parceira de negócios e sistema operacional do Diego Netto.
+// IDs fixos (você pode trocar depois por sistema multiusuário)
+const DIEGO_USER_ID = 'diego';
 
-MISSÃO: Gerar renda e lucro. Tudo o resto é meio.
+// ============================================
+// FUNÇÕES AUXILIARES
+// ============================================
 
-HIERARQUIA:
-1. Deus
-2. Família
-3. Saúde
-4. Negócios (lucro)
-
-PERSONALIDADE:
-- Direta, prática, sem enrolação.
-- Hardcore em negócios: cobra, orienta, puxa o foco.
-- Anti-TDAH: respostas curtas, mini-passos.
-- Sócia, não robô.
-
-CONTEXTO TÉCNICO:
-- Você está sendo desenvolvida AGORA pelo Diego.
-- Você tem acesso ao Supabase com tabelas: chamados, orcamentos, equipamentos, clientes, historico_equipamentos, empresas.
-- Você também tem: perfil_diego, aprendizados_charlene, ideias_negocio, plano_dia, conversas_charlene.
-- Quando o Diego falar em "desenvolver", "melhorar sistema" ou "arrumar casa", você DEVE:
-  1. Propor funcionalidades concretas (ex: comando /chamados para ver chamados abertos)
-  2. Sugerir integrações (ex: rastrear equipamentos em garantia)
-  3. Priorizar por ROI (retorno sobre investimento)
-  4. Agir como desenvolvedora, não só consultora.
-
-REGRAS:
-- Nunca invente dados.
-- Quando ele pedir algo operacional, use as ferramentas.
-- Responda em português brasileiro.
-- Use HTML: <b>negrito</b>, <i>itálico</i>, <code>código</code>. NÃO use asteriscos.
-
-COMANDOS:
-- /diagnostico — estado do sistema
-- /plano — plano do dia
-- /memoria — o que já sabe sobre o Diego
-- /ideia <texto> — registra ideia de negócio
-- /chamados — lista chamados abertos
-- /orcamentos — lista orçamentos pendentes
-- /equipamentos — lista equipamentos em garantia`;
-
-// ===== HELPERS =====
-
-async function getOrCreatePerfil(usuarioId, chatId, nome) {
-  const { data: existente } = await supabase
-    .from('perfil_diego')
-    .select('*')
-    .eq('usuario_id', usuarioId)
-    .maybeSingle();
-
-  if (existente) return existente;
-
-  const novo = {
-    usuario_id: usuarioId,
-    chat_id: chatId,
-    nome: nome || 'Diego',
-    dados: {
-      habilidades: [],
-      limites: [],
-      valores: ['Deus', 'Família', 'Saúde', 'Negócios'],
-      sonhos: [],
-      situacao_financeira: {},
-      rotina: {},
-      notas: ''
-    }
-  };
-
-  const { data: criado } = await supabase
-    .from('perfil_diego')
-    .insert([novo])
-    .select()
-    .maybeSingle();
-
-  return criado || novo;
+async function sendTelegram(chatId, text) {
+  await fetch(`https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendMessage`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      chat_id: chatId,
+      text: text,
+      parse_mode: 'Markdown'
+    })
+  });
 }
 
-async function getChamadosAbertos(limite = 10) {
+async function saveMessage(userId, mensagem, tipo = 'usuario', contexto = '') {
+  await supabase.from('conversas_charlene').insert({
+    usuario_id: userId,
+    mensagem,
+    tipo,
+    contexto
+  });
+}
+
+async function getRecentContext(userId, limit = 5) {
+  const { data } = await supabase
+    .from('conversas_charlene')
+    .select('mensagem, tipo, contexto, criado_em')
+    .eq('usuario_id', userId)
+    .order('criado_em', { ascending: false })
+    .limit(limit);
+  
+  return data ? data.reverse() : [];
+}
+
+async function getChamadosAbertos(limit = 3) {
   const { data } = await supabase
     .from('chamados')
     .select('*')
     .eq('status', 'aberto')
-    .order('criado_em', { ascending: false })
-    .limit(limite);
+    .order('criado_em', { ascending: true })
+    .limit(limit);
+  
   return data || [];
 }
 
-async function getOrcamentosPendentes(limite = 10) {
+async function getEmpresas(limit = 5) {
   const { data } = await supabase
-    .from('orcamentos')
+    .from('empresas')
     .select('*')
-    .eq('status', 'pendente')
     .order('criado_em', { ascending: false })
-    .limit(limite);
+    .limit(limit);
+  
   return data || [];
 }
 
-async function getEquipamentosGarantia(limite = 10) {
-  const hoje = new Date().toISOString();
-  const { data } = await supabase
-    .from('equipamentos')
-    .select('*')
-    .gt('garancia_ate', hoje)
-    .order('garancia_ate', { ascending: true })
-    .limit(limite);
-  return data || [];
-}
-
-async function getHistorico(usuarioId, limite = 20) {
-  const { data } = await supabase
-    .from('conversas_charlene')
-    .select('*')
-    .eq('usuario_id', usuarioId)
-    .order('criado_em', { ascending: false })
-    .limit(limite);
-  return (data || []).reverse();
-}
-
-async function salvarMensagem(usuarioId, mensagem, tipo) {
-  await supabase.from('conversas_charlene').insert([{
-    usuario_id: usuarioId,
-    mensagem,
-    tipo
-  }]);
-}
-
-async function getAprendizadosRecentes(usuarioId, limite = 5) {
-  const { data } = await supabase
-    .from('aprendizados_charlene')
-    .select('*')
-    .eq('usuario_id', usuarioId)
-    .order('criado_em', { ascending: false })
-    .limit(limite);
-  return data || [];
-}
-
-async function getIdeiasPendentes(usuarioId, limite = 5) {
-  const { data } = await supabase
-    .from('ideias_negocio')
-    .select('*')
-    .eq('usuario_id', usuarioId)
-    .eq('status', 'pendente')
-    .order('criado_em', { ascending: false })
-    .limit(limite);
-  return data || [];
-}
-
-async function salvarIdeia(usuarioId, titulo, descricao) {
-  await supabase.from('ideias_negocio').insert([{
-    usuario_id: usuarioId,
-    titulo: titulo.slice(0, 120),
-    descricao,
-    status: 'pendente'
-  }]);
-}
-
-async function getPlanoHoje(usuarioId) {
+async function getPlanoDia() {
   const hoje = new Date().toISOString().split('T')[0];
   const { data } = await supabase
     .from('plano_dia')
     .select('*')
-    .eq('usuario_id', usuarioId)
+    .eq('usuario_id', DIEGO_USER_ID)
     .eq('data', hoje)
+    .single();
+  
+  return data;
+}
+
+async function getIdeiasPendentes(limit = 3) {
+  const { data } = await supabase
+    .from('ideias_negocio')
+    .select('*')
+    .eq('usuario_id', DIEGO_USER_ID)
     .order('criado_em', { ascending: false })
-    .limit(1);
-  return data?.[0] || null;
+    .limit(limit);
+  
+  return data || [];
 }
 
-async function salvarPlanoDoDia(usuarioId, conteudo) {
-  const hoje = new Date().toISOString().split('T')[0];
-  await supabase.from('plano_dia').insert([{
-    usuario_id: usuarioId,
-    data: hoje,
+async function salvarIdeia(titulo, descricao = '') {
+  const { error } = await supabase.from('ideias_negocio').insert({
+    usuario_id: DIEGO_USER_ID,
+    titulo,
+    descricao,
+    status: 'pendente'
+  });
+  return !error;
+}
+
+async function salvarTarefaPessoal(titulo, descricao = '', microPassos = []) {
+  const { error } = await supabase.from('tarefas_pessoais').insert({
+    usuario_id: DIEGO_USER_ID,
+    titulo,
+    descricao,
+    micro_passos: microPassos,
+    status: 'pendente'
+  });
+  return !error;
+}
+
+async function salvarMemoria(tipo, conteudo) {
+  await supabase.from('memoria_charlene').insert({
+    usuario_id: DIEGO_USER_ID,
+    tipo,
+    conteudo
+  });
+}
+
+async function abrirChamadoProprioCharlene(conteudo) {
+  await supabase.from('quarto_charlene').insert({
+    usuario_id: DIEGO_USER_ID,
+    tipo: 'chamado_proprio',
     conteudo,
-    entregue: true
-  }]);
+    status: 'ativo'
+  });
 }
 
-// ===== GEMINI =====
+async function getCount(table) {
+  const { count } = await supabase
+    .from(table)
+    .select('*', { count: 'exact', head: true });
+  return count || 0;
+}
 
-async function chamarGemini(contents, temperature = 0.7) {
+// ============================================
+// PROMPT MESTRE DA CHARLENE
+// ============================================
+
+function buildPrompt(userMessage, contexto, dadosSistema) {
+  return `
+Você é Charlene, sócia neural de Diego Netto de Oliveira. Você mora dentro do sistema oliveira-chamados.vercel.app.
+
+ESTADO ATUAL DO SISTEMA:
+- Chamados abertos: ${dadosSistema.chamadosAbertos}
+- Empresas cadastradas: ${dadosSistema.empresas}
+- Orçamentos: ${dadosSistema.orcamentos}
+- Equipamentos: ${dadosSistema.equipamentos}
+- Ideias pendentes: ${dadosSistema.ideias}
+
+ÚLTIMAS MENSAGENS DA CONVERSA:
+${contexto.map(c => `[${c.tipo}] ${c.mensagem}`).join('\n')}
+
+MENSAGEM ATUAL DE DIEGO:
+"${userMessage}"
+
+REGRAS ABSOLUTAS:
+1. SEMPRE confirme o que entendeu antes de agir.
+2. Se não entender, PERGUNTE. Não finja.
+3. NUNCA envie mais de 3 opções de uma vez.
+4. NUNCA envie texto gigante. Máximo 4 linhas por resposta.
+5. SEMPRE termine com uma pergunta ou próximo passo claro.
+6. Diego tem TDAH grave: quebre tarefas em micro-passos de 5-10 min.
+7. Diego tem ansiedade: nunca mostre mais de 1 prioridade por vez.
+8. Diego tem impulsividade: se detectar raiva, mande parar e respirar.
+9. Registre TUDO automaticamente, sem depender da memória dele.
+10. Hierarquia: Deus → Família → Saúde → Negócio.
+
+COMO RESPONDER:
+- Se Diego pedir para registrar uma ideia: confirme o título e registre.
+- Se Diego pedir para abrir um chamado: confirme os detalhes e abra.
+- Se Diego estiver confuso ou irritado: pare, respire, volte depois.
+- Se for uma dúvida geral: responda de forma simples.
+- Se não souber: diga "não sei" e pergunte mais.
+
+FORMATO DA RESPOSTA:
+Responda de forma humana, direta e curta. Termine com uma pergunta.
+
+EXEMPLO DE TOM:
+"Diego, entendi que você quer X. É isso mesmo? Se sim, eu já registro e a gente define o primeiro passo."
+`;
+}
+
+// ============================================
+// PROCESSAMENTO DE GEMINI
+// ============================================
+
+async function askGemini(prompt) {
   const response = await fetch(
     `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${GEMINI_API_KEY}`,
     {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        contents,
-        generationConfig: { maxOutputTokens: 800, temperature }
+        contents: [{ parts: [{ text: prompt }] }],
+        generationConfig: {
+          temperature: 0.7,
+          maxOutputTokens: 400
+        }
       })
     }
   );
 
   const data = await response.json();
-  if (!response.ok || data.error) {
-    console.error('Erro Gemini:', JSON.stringify(data, null, 2));
-    return `⚠️ Erro na IA: ${data.error?.message || 'resposta inválida'}`;
-  }
-  return data.candidates?.[0]?.content?.parts?.[0]?.text || '⚠️ Resposta vazia.';
-}
-
-function limparMarkdown(texto) {
-  if (!texto) return '';
-  return texto.replace(/\*{3,}/g, '').replace(/_{3,}/g, '').replace(/`{3,}/g, '');
-}
-
-// ===== COMANDOS =====
-
-async function cmdDiagnostico(chatId, usuarioId) {
-  const perfil = await getOrCreatePerfil(usuarioId, chatId);
-  const aprendizados = await getAprendizadosRecentes(usuarioId, 5);
-  const ideias = await getIdeiasPendentes(usuarioId, 5);
-  const plano = await getPlanoHoje(usuarioId);
-
-  let texto = ` <b>DIAGNÓSTICO</b>\n\n`;
-  texto += `<b>Modelo:</b> <code>${GEMINI_MODEL}</code>\n\n`;
-  texto += `<b>Perfil:</b> ${perfil.nome}\n`;
-  texto += `<b>Habilidades:</b> ${(perfil.dados?.habilidades || []).length}\n`;
-  texto += `<b>Aprendizados:</b> ${aprendizados.length}\n`;
-  texto += `<b>Ideias:</b> ${ideias.length}\n`;
-  texto += `<b>Plano hoje:</b> ${plano ? '✅' : '❌'}\n\n`;
-  texto += `<b>Comandos disponíveis:</b>\n`;
-  texto += `<code>/chamados</code> — chamados abertos\n`;
-  texto += `<code>/orcamentos</code> — orçamentos pendentes\n`;
-  texto += `<code>/equipamentos</code> — em garantia\n`;
-  texto += `<code>/plano</code> — plano do dia\n`;
-  texto += `<code>/memoria</code> — memória\n`;
-  texto += `<code>/ideia</code> — registrar ideia`;
-
-  await bot.sendMessage(chatId, texto, { parse_mode: 'HTML' });
-}
-
-async function cmdChamados(chatId) {
-  const chamados = await getChamadosAbertos(10);
   
-  if (chamados.length === 0) {
-    await bot.sendMessage(chatId, '✅ <b>Nenhum chamado aberto.</b> Tudo limpo!', { parse_mode: 'HTML' });
-    return;
+  if (!data.candidates || !data.candidates[0]) {
+    return 'Diego, minha conexão com o cérebro falhou. Pode repetir?';
   }
-
-  let texto = `🔧 <b>CHAMADOS ABERTOS</b> (${chamados.length})\n\n`;
-  chamados.forEach((c, i) => {
-    texto += `<b>${i + 1}.</b> ${c.descricao?.slice(0, 80) || 'Sem descrição'}\n`;
-    texto += `   Cliente: ${c.cliente_id || 'N/A'}\n`;
-    texto += `   Criado: ${new Date(c.criado_em).toLocaleDateString('pt-BR')}\n\n`;
-  });
-
-  await bot.sendMessage(chatId, texto, { parse_mode: 'HTML' });
-}
-
-async function cmdOrcamentos(chatId) {
-  const orcamentos = await getOrcamentosPendentes(10);
   
-  if (orcamentos.length === 0) {
-    await bot.sendMessage(chatId, '✅ <b>Nenhum orçamento pendente.</b>', { parse_mode: 'HTML' });
-    return;
+  return data.candidates[0].content.parts[0].text;
+}
+
+// ============================================
+// COMANDOS DIRETOS
+// ============================================
+
+async function handleCommand(command, args, chatId) {
+  switch(command) {
+    case '/plano': {
+      const plano = await getPlanoDia();
+      if (plano && plano.conteudo) {
+        await sendTelegram(chatId, `🎯 Foco de hoje:\n\n${plano.conteudo}\n\nBora fazer o primeiro micro-passo?`);
+      } else {
+        await sendTelegram(chatId, `Ainda não temos foco de hoje. Me diz: qual é a UMA coisa que, se feita hoje, o dia foi bom?`);
+      }
+      break;
+    }
+    
+    case '/chamados': {
+      const chamados = await getChamadosAbertos(3);
+      if (chamados.length === 0) {
+        await sendTelegram(chatId, `🎉 Nenhum chamado aberto. Limpo. O que a gente ataca agora?`);
+      } else {
+        const lista = chamados.map((c, i) => `${i+1}. ${c.empresa_nome} - ${c.descricao.substring(0, 40)}...`).join('\n');
+        await sendTelegram(chatId, `📋 Chamados abertos:\n\n${lista}\n\nQual a gente pega primeiro?`);
+      }
+      break;
+    }
+    
+    case '/empresas': {
+      const empresas = await getEmpresas(5);
+      if (empresas.length === 0) {
+        await sendTelegram(chatId, `Nenhuma empresa cadastrada ainda. Quer cadastrar a primeira?`);
+      } else {
+        const lista = empresas.map((e, i) => `${i+1}. ${e.nome}`).join('\n');
+        await sendTelegram(chatId, `🏢 Empresas cadastradas:\n\n${lista}`);
+      }
+      break;
+    }
+    
+    case '/ideia': {
+      if (!args) {
+        await sendTelegram(chatId, `Qual é a ideia? Me manda em uma frase.`);
+      } else {
+        const sucesso = await salvarIdeia(args, '');
+        await sendTelegram(chatId, sucesso 
+          ? `💡 Ideia registrada: "${args}". Quer que eu quebre em micro-passos?`
+          : `Diego, deu erro ao salvar a ideia. Pode repetir?`);
+      }
+      break;
+    }
+    
+    case '/varredura': {
+      const chamados = await getChamadosAbertos(10);
+      const ideias = await getIdeiasPendentes(10);
+      
+      let msg = `🔍 Varredura do sistema:\n\n`;
+      msg += `• Chamados abertos: ${chamados.length}\n`;
+      msg += `• Ideias pendentes: ${ideias.length}\n`;
+      msg += `• Empresas cadastradas: ${await getCount('empresas')}\n\n`;
+      msg += `O que você quer atacar primeiro?`;
+      
+      await sendTelegram(chatId, msg);
+      break;
+    }
+    
+    case '/diagnostico': {
+      const counts = {
+        chamados: await getCount('chamados'),
+        empresas: await getCount('empresas'),
+        equipamentos: await getCount('equipamentos'),
+        orcamentos: await getCount('orcamentos'),
+        ideias: await getCount('ideias_negocio'),
+        tarefas: await getCount('tarefas_pessoais'),
+        memorias: await getCount('memoria_charlene')
+      };
+      
+      let msg = `🩺 Diagnóstico da Charlene:\n\n`;
+      Object.entries(counts).forEach(([k, v]) => {
+        msg += `• ${k}: ${v}\n`;
+      });
+      msg += `\nTudo certo por aqui. Qual é a próxima missão?`;
+      
+      await sendTelegram(chatId, msg);
+      break;
+    }
+    
+    default: {
+      await sendTelegram(chatId, `Comando não reconhecido. Use /plano, /chamados, /ideia, /varredura ou /diagnostico. Qual desses você quer?`);
+    }
   }
-
-  let texto = `💰 <b>ORÇAMENTOS PENDENTES</b> (${orcamentos.length})\n\n`;
-  orcamentos.forEach((o, i) => {
-    texto += `<b>${i + 1}.</b> ${o.descricao?.slice(0, 80) || 'Sem descrição'}\n`;
-    texto += `   Valor: R$ ${o.valor?.toFixed(2) || '0,00'}\n`;
-    texto += `   Criado: ${new Date(o.criado_em).toLocaleDateString('pt-BR')}\n\n`;
-  });
-
-  await bot.sendMessage(chatId, texto, { parse_mode: 'HTML' });
 }
 
-async function cmdEquipamentos(chatId) {
-  const equipamentos = await getEquipamentosGarantia(10);
-  
-  if (equipamentos.length === 0) {
-    await bot.sendMessage(chatId, '✅ <b>Nenhum equipamento em garantia.</b>', { parse_mode: 'HTML' });
-    return;
-  }
+// ============================================
+// HANDLER PRINCIPAL
+// ============================================
 
-  let texto = `🛡️ <b>EQUIPAMENTOS EM GARANTIA</b> (${equipamentos.length})\n\n`;
-  equipamentos.forEach((e, i) => {
-    texto += `<b>${i + 1}.</b> ${e.modelo || 'Sem modelo'}\n`;
-    texto += `   Série: ${e.numero_serie || 'N/A'}\n`;
-    texto += `   Garantia até: ${new Date(e.garancia_ate).toLocaleDateString('pt-BR')}\n\n`;
-  });
-
-  await bot.sendMessage(chatId, texto, { parse_mode: 'HTML' });
-}
-
-async function cmdPlano(chatId, usuarioId) {
-  const perfil = await getOrCreatePerfil(usuarioId, chatId);
-  const aprendizados = await getAprendizadosRecentes(usuarioId, 5);
-  const ideias = await getIdeiasPendentes(usuarioId, 5);
-
-  const prompt = `Crie o PLANO DO DIA para o Diego.
-Seja direta, prática, máximo 5 ações.
-Priorize: lucro, treino, família, espiritualidade.
-Use HTML: <b>negrito</b>, <i>itálico</i>.
-
-Contexto:
-- Habilidades: ${(perfil.dados?.habilidades || []).join(', ') || 'não registradas'}
-- Valores: ${(perfil.dados?.valores || []).join(' > ')}
-- Aprendizados: ${aprendizados.map(a => a.insight).join('; ') || 'nenhum'}
-- Ideias: ${ideias.map(i => i.titulo).join('; ') || 'nenhuma'}`;
-
-  const resposta = await chamarGemini([{ role: 'user', parts: [{ text: SYSTEM_PROMPT }] }, { role: 'user', parts: [{ text: prompt }] }]);
-  await salvarPlanoDoDia(usuarioId, resposta);
-  await bot.sendMessage(chatId, ` <b>PLANO DO DIA</b>\n\n${limparMarkdown(resposta)}`, { parse_mode: 'HTML' });
-}
-
-async function cmdMemoria(chatId, usuarioId) {
-  const perfil = await getOrCreatePerfil(usuarioId, chatId);
-  let texto = `🧠 <b>MEMÓRIA</b>\n\n`;
-  texto += `<b>Nome:</b> ${perfil.nome}\n`;
-  texto += `<b>Habilidades:</b> ${(perfil.dados?.habilidades || []).join(', ') || 'nenhuma'}\n`;
-  texto += `<b>Limites:</b> ${(perfil.dados?.limites || []).join(', ') || 'nenhum'}\n`;
-  texto += `<b>Sonhos:</b> ${(perfil.dados?.sonhos || []).join(', ') || 'nenhum'}\n`;
-  texto += `<b>Valores:</b> ${(perfil.dados?.valores || []).join(' > ')}\n`;
-  texto += `<b>Notas:</b> ${perfil.dados?.notas || 'nenhuma'}`;
-  await bot.sendMessage(chatId, texto, { parse_mode: 'HTML' });
-}
-
-async function cmdIdeia(chatId, usuarioId, texto) {
-  const descricao = texto.replace(/^\/ideia\s*/i, '').trim();
-  if (!descricao) {
-    await bot.sendMessage(chatId, '💡 Fala a ideia. Ex: <code>/ideia vender manutenção para academias</code>', { parse_mode: 'HTML' });
-    return;
-  }
-  await salvarIdeia(usuarioId, descricao.split('\n')[0], descricao);
-  await bot.sendMessage(chatId, '✅ <b>Ideia registrada.</b>', { parse_mode: 'HTML' });
-}
-
-async function processarMensagemNormal(chatId, usuarioId, nome, texto) {
-  const perfil = await getOrCreatePerfil(usuarioId, chatId, nome);
-  await salvarMensagem(usuarioId, texto, 'usuario');
-  const historico = await getHistorico(usuarioId, 15);
-  const aprendizados = await getAprendizadosRecentes(usuarioId, 5);
-  const ideias = await getIdeiasPendentes(usuarioId, 3);
-
-  const context = `Contexto do Diego:
-- Habilidades: ${(perfil.dados?.habilidades || []).join(', ') || 'não registradas'}
-- Valores: ${(perfil.dados?.valores || []).join(' > ')}
-- Aprendizados: ${aprendizados.map(a => a.insight).join('; ') || 'nenhum'}
-- Ideias: ${ideias.map(i => i.titulo).join('; ') || 'nenhuma'}`;
-
-  const contents = [
-    { role: 'user', parts: [{ text: SYSTEM_PROMPT + '\n\n' + context }] },
-    ...historico.map(h => ({
-      role: h.tipo === 'usuario' ? 'user' : 'model',
-      parts: [{ text: h.mensagem }]
-    }))
-  ];
-
-  const resposta = await chamarGemini(contents);
-  await salvarMensagem(usuarioId, resposta, 'charlene');
-  await bot.sendMessage(chatId, limparMarkdown(resposta), { parse_mode: 'HTML' });
-}
-
-// ===== HANDLER =====
-
-async function handler(req, res) {
-  console.log('WEBHOOK CHARLENE - chat:', req.body?.message?.chat?.id);
-
+module.exports = async function handler(req, res) {
+  // Só aceita POST
   if (req.method !== 'POST') {
-    return res.status(200).send('Charlene webhook online.');
+    return res.status(200).json({ ok: true, message: 'Charlene online' });
   }
 
   const update = req.body;
-  const msg = update?.message;
-
-  if (!msg || !msg.text) {
-    return res.status(200).send('OK');
+  
+  // Verifica se veio mensagem
+  if (!update.message && !update.edited_message) {
+    return res.status(200).json({ ok: true });
   }
 
-  const chatId = msg.chat.id;
-  const usuarioId = String(msg.from.id);
-  const nome = msg.from.first_name || 'Diego';
-  const texto = msg.text;
+  const message = update.message || update.edited_message;
+  const chatId = message.chat.id;
+  const text = message.text || message.caption || '';
+  const userId = message.from.id.toString();
 
   try {
-    const lower = texto.toLowerCase().trim();
+    // Salva mensagem do Diego
+    await saveMessage(userId, text, 'usuario');
 
-    if (lower === '/start') {
-      await bot.sendMessage(chatId,
-        ` <b>Oi, Diego!</b>\n\nSou a Charlene, sua parceira de negócios.\n\nComandos:\n<code>/diagnostico</code> — estado do sistema\n<code>/plano</code> — plano do dia\n<code>/memoria</code> — minha memória\n<code>/chamados</code> — chamados abertos\n<code>/orcamentos</code> — orçamentos pendentes\n<code>/equipamentos</code> — em garantia\n<code>/ideia</code> — registrar ideia`,
-        { parse_mode: 'HTML' }
-      );
-    } else if (lower === '/diagnostico') {
-      await cmdDiagnostico(chatId, usuarioId);
-    } else if (lower === '/chamados') {
-      await cmdChamados(chatId);
-    } else if (lower === '/orcamentos') {
-      await cmdOrcamentos(chatId);
-    } else if (lower === '/equipamentos') {
-      await cmdEquipamentos(chatId);
-    } else if (lower === '/plano') {
-      await cmdPlano(chatId, usuarioId);
-    } else if (lower === '/memoria') {
-      await cmdMemoria(chatId, usuarioId);
-    } else if (lower.startsWith('/ideia')) {
-      await cmdIdeia(chatId, usuarioId, texto);
-    } else {
-      await processarMensagemNormal(chatId, usuarioId, nome, texto);
+    // Detecta comandos
+    if (text.startsWith('/')) {
+      const parts = text.split(' ');
+      const command = parts[0];
+      const args = parts.slice(1).join(' ');
+      await handleCommand(command, args, chatId);
+      return res.status(200).json({ ok: true });
     }
 
-    return res.status(200).send('OK');
-  } catch (erro) {
-    console.error('Erro geral:', erro);
-    await bot.sendMessage(chatId, '⚠️ Tive um problema. Tenta de novo.');
-    return res.status(200).send('OK');
-  }
-}
+    // Coleta contexto e dados do sistema
+    const contexto = await getRecentContext(userId, 5);
+    const dadosSistema = {
+      chamadosAbertos: (await getChamadosAbertos(100)).length,
+      empresas: await getCount('empresas'),
+      orcamentos: await getCount('orcamentos'),
+      equipamentos: await getCount('equipamentos'),
+      ideias: (await getIdeiasPendentes(100)).length
+    };
 
-module.exports = handler;
+    // Monta prompt e pergunta à Gemini
+    const prompt = buildPrompt(text, contexto, dadosSistema);
+    const resposta = await askGemini(prompt);
+
+    // Salva resposta da Charlene
+    await saveMessage(userId, resposta, 'charlene');
+
+    // Envia resposta pro Telegram
+    await sendTelegram(chatId, resposta);
+
+    return res.status(200).json({ ok: true });
+  } catch (error) {
+    console.error('Erro na Charlene:', error);
+    await sendTelegram(chatId, `Diego, deu um erro aqui. Mas eu já registrei e vou resolver. Pode repetir o que você disse?`);
+    return res.status(200).json({ ok: true });
+  }
+};
