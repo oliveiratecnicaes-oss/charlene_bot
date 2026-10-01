@@ -1,10 +1,10 @@
 // ============================================
-// CHARLENE BOT v3.3 - CORREÇÃO DE AMBIENTE
+// CHARLENE BOT v3.4 - MODO DE DIAGNÓSTICO
 // ============================================
-// Olá, Regina! Versão 3.3.
-// O problema de "amnésia" foi resolvido. O código agora usa
-// um método mais robusto para encontrar o arquivo de prompt e
-// o `vercel.json` garante que ele será incluído no deploy.
+// Olá, Regina! Esta é a versão 3.4.
+// Adicionei o comando `/debug` para nos ajudar a entender
+// exatamente como a Vercel está estruturando os arquivos.
+// Após o deploy, execute /debug e me envie o resultado.
 // ============================================
 
 const { createClient } = require('@supabase/supabase-js');
@@ -24,53 +24,7 @@ const config = {
 const supabase = createClient(config.supabaseUrl, config.supabaseKey);
 
 // --- 2. SERVIÇOS ABSTRAÍDOS ---
-// (Nenhuma mudança aqui, tudo igual à v3.2)
 const telegramService = {
-  async sendMessage(chatId, text) { /* ...código igual... */ }
-};
-const aiService = {
-  async generateResponse(prompt) { /* ...código igual... */ }
-};
-const databaseService = { /* ...código igual... */ };
-
-
-// --- 3. PROMPT BUILDER DINÂMICO ---
-const promptBuilder = {
-  getPromptTemplate: () => {
-    try {
-      // **AQUI ESTÁ A MUDANÇA PRINCIPAL**
-      // Usando `process.cwd()` que é mais confiável no ambiente Vercel.
-      const promptPath = path.join(process.cwd(), 'prompts', 'prompt.md');
-      return fs.readFileSync(promptPath, 'utf-8');
-    } catch (error) {
-      console.error('ERRO CRÍTICO: Não foi possível ler o arquivo prompt.md.', error);
-      // Retorna um prompt de erro que avisa o usuário do problema de configuração.
-      return 'AVISO: Arquivo de personalidade não encontrado. Operando em modo de emergência. Por favor, avise o administrador do sistema. Mensagem do usuário: {{mensagem_usuario}}';
-    }
-  },
-  build: (template, data) => {
-    let finalPrompt = template;
-    for (const key in data) {
-      const placeholder = new RegExp(`{{${key}}}`, 'g');
-      finalPrompt = finalPrompt.replace(placeholder, data[key]);
-    }
-    return finalPrompt;
-  },
-};
-
-// --- 4. HANDLERS DE COMANDOS ---
-// (Nenhuma mudança aqui, tudo igual à v3.2)
-const commandHandlers = { /* ...código igual... */ };
-
-// --- 5. HANDLER PRINCIPAL (ORQUESTRADOR) ---
-// (Nenhuma mudança aqui, tudo igual à v3.2)
-module.exports = async function handler(req, res) { /* ...código igual... */ };
-
-
-// Para facilitar, aqui está o código completo novamente para você copiar e colar
-// ==============================================================================
-
-const telegramService_full = {
   async sendMessage(chatId, text) {
     const url = `https://api.telegram.org/bot${config.telegramToken}/sendMessage`;
     await fetch(url, {
@@ -81,7 +35,7 @@ const telegramService_full = {
   },
 };
 
-const aiService_full = {
+const aiService = {
   async generateResponse(prompt) {
     const url = `https://generativelanguage.googleapis.com/v1beta/models/${config.geminiModel}:generateContent?key=${config.geminiApiKey}`;
     try {
@@ -106,7 +60,7 @@ const aiService_full = {
   },
 };
 
-const databaseService_full = {
+const databaseService = {
   saveMessage: (userId, mensagem, tipo) =>
     supabase.from('conversas_charlene').insert({ usuario_id: userId, mensagem, tipo }),
   getRecentContext: async (userId, limit = 5) => {
@@ -143,40 +97,86 @@ const databaseService_full = {
   },
 };
 
-const commandHandlers_full = {
+// --- 3. PROMPT BUILDER DINÂMICO ---
+const promptBuilder = {
+  getPromptTemplate: () => {
+    try {
+      const promptPath = path.join(process.cwd(), 'prompts', 'prompt.md');
+      return fs.readFileSync(promptPath, 'utf-8');
+    } catch (error) {
+      console.error('ERRO CRÍTICO: Não foi possível ler o arquivo prompt.md.', error);
+      return 'ERRO 404: Módulo de carisma desativado\nMODO DE SEGURANÇA ATIVADO\n\nBoa noite, usuário.\n\nComo o meu arquivo de personalidade principal está ausente, não posso responder com o charme e o entusiasmo habituais da Charlene. No entanto, os meus sistemas lógicos e de processamento de texto continuam operando normalmente.\n\nComo posso ajudar você nesta noite?';
+    }
+  },
+  build: (template, data) => {
+    if (template.startsWith('ERRO 404')) return template; // Não processa placeholders se o template for de erro
+    let finalPrompt = template;
+    for (const key in data) {
+      const placeholder = new RegExp(`{{${key}}}`, 'g');
+      finalPrompt = finalPrompt.replace(placeholder, data[key]);
+    }
+    return finalPrompt;
+  },
+};
+
+// --- 4. HANDLERS DE COMANDOS ---
+const commandHandlers = {
+  '/debug': async (chatId) => {
+    try {
+      const rootPath = process.cwd();
+      const rootContents = fs.readdirSync(rootPath);
+      
+      let message = `**RELATÓRIO DE DIAGNÓSTICO DO AMBIENTE**\n\n`;
+      message += `**Diretório de Trabalho Atual (process.cwd()):**\n\`${rootPath}\`\n\n`;
+      message += `**Conteúdo Encontrado na Raiz:**\n- \`${rootContents.join('\n- ')}\`\n\n`;
+
+      const promptsPath = path.join(rootPath, 'prompts');
+      if (fs.existsSync(promptsPath)) {
+        const promptsContents = fs.readdirSync(promptsPath);
+        message += `**Conteúdo da Pasta 'prompts':**\n- \`${promptsContents.join('\n- ')}\``;
+      } else {
+        message += `**AVISO:** A pasta 'prompts' NÃO foi encontrada no diretório de trabalho.`;
+      }
+
+      await telegramService.sendMessage(chatId, message);
+    } catch (e) {
+      await telegramService.sendMessage(chatId, `Erro ao executar o diagnóstico: ${e.message}`);
+    }
+  },
   '/plano': async (chatId, userId) => {
-    const plano = await databaseService_full.getDailyPlan(userId);
-    await telegramService_full.sendMessage(chatId, plano?.conteudo ? `🎯 Foco de hoje:\n\n${plano.conteudo}\n\nBora fazer o primeiro micro-passo?` : `Ainda não temos foco de hoje. Qual é a UMA coisa que, se feita hoje, o dia foi bom?`);
+    const plano = await databaseService.getDailyPlan(userId);
+    await telegramService.sendMessage(chatId, plano?.conteudo ? `🎯 Foco de hoje:\n\n${plano.conteudo}\n\nBora fazer o primeiro micro-passo?` : `Ainda não temos foco de hoje. Qual é a UMA coisa que, se feita hoje, o dia foi bom?`);
   },
   '/chamados': async (chatId) => {
-    const chamados = await databaseService_full.getOpenTickets(3);
-    await telegramService_full.sendMessage(chatId, (chamados.length > 0) ? `📋 Chamados abertos:\n\n${chamados.map((c, i) => `${i + 1}. ${c.empresa_nome} - ${c.descricao.substring(0, 40)}...`).join('\n')}\n\nQual a gente pega primeiro?` : `🎉 Nenhum chamado aberto. Limpo. O que a gente ataca agora?`);
+    const chamados = await databaseService.getOpenTickets(3);
+    await telegramService.sendMessage(chatId, (chamados.length > 0) ? `📋 Chamados abertos:\n\n${chamados.map((c, i) => `${i + 1}. ${c.empresa_nome} - ${c.descricao.substring(0, 40)}...`).join('\n')}\n\nQual a gente pega primeiro?` : `🎉 Nenhum chamado aberto. Limpo. O que a gente ataca agora?`);
   },
   '/empresas': async (chatId) => {
-    const empresas = await databaseService_full.getCompanies(5);
-    await telegramService_full.sendMessage(chatId, (empresas.length > 0) ? `🏢 Empresas cadastradas:\n\n${empresas.map((e, i) => `${i + 1}. ${e.nome}`).join('\n')}` : `Nenhuma empresa cadastrada ainda. Quer cadastrar a primeira?`);
+    const empresas = await databaseService.getCompanies(5);
+    await telegramService.sendMessage(chatId, (empresas.length > 0) ? `🏢 Empresas cadastradas:\n\n${empresas.map((e, i) => `${i + 1}. ${e.nome}`).join('\n')}` : `Nenhuma empresa cadastrada ainda. Quer cadastrar a primeira?`);
   },
   '/ideia': async (chatId, userId, args) => {
-    if (!args) return await telegramService_full.sendMessage(chatId, `Qual é a ideia? Me manda em uma frase.`);
-    const { error } = await databaseService_full.saveIdea(userId, args);
-    await telegramService_full.sendMessage(chatId, !error ? `💡 Ideia registrada: "${args}". Quer que eu quebre em micro-passos?` : `Deu erro ao salvar a ideia. Pode repetir?`);
+    if (!args) return await telegramService.sendMessage(chatId, `Qual é a ideia? Me manda em uma frase.`);
+    const { error } = await databaseService.saveIdea(userId, args);
+    await telegramService.sendMessage(chatId, !error ? `💡 Ideia registrada: "${args}". Quer que eu quebre em micro-passos?` : `Deu erro ao salvar a ideia. Pode repetir?`);
   },
   '/varredura': async (chatId, userId) => {
-    const [chamados, ideias, numEmpresas] = await Promise.all([databaseService_full.getOpenTickets(10), databaseService_full.getPendingIdeas(userId, 10), databaseService_full.getCount('empresas')]);
-    await telegramService_full.sendMessage(chatId, `🔍 Varredura do sistema:\n\n• Chamados abertos: ${chamados.length}\n• Ideias pendentes: ${ideias.length}\n• Empresas cadastradas: ${numEmpresas}\n\nO que você quer atacar primeiro?`);
+    const [chamados, ideias, numEmpresas] = await Promise.all([databaseService.getOpenTickets(10), databaseService.getPendingIdeas(userId, 10), databaseService.getCount('empresas')]);
+    await telegramService.sendMessage(chatId, `🔍 Varredura do sistema:\n\n• Chamados abertos: ${chamados.length}\n• Ideias pendentes: ${ideias.length}\n• Empresas cadastradas: ${numEmpresas}\n\nO que você quer atacar primeiro?`);
   },
   '/diagnostico': async (chatId) => {
     const tables = ['chamados', 'empresas', 'equipamentos', 'orcamentos', 'ideias_negocio', 'tarefas_pessoais'];
-    const counts = await Promise.all(tables.map(table => databaseService_full.getCount(table)));
+    const counts = await Promise.all(tables.map(table => databaseService.getCount(table)));
     let msg = `🩺 Diagnóstico do sistema:\n\n${tables.map((table, i) => `• ${table}: ${counts[i]}`).join('\n')}\n\nTudo certo por aqui. Qual é a próxima missão?`;
-    await telegramService_full.sendMessage(chatId, msg);
+    await telegramService.sendMessage(chatId, msg);
   },
   'default': async (chatId) => {
-    const availableCommands = Object.keys(commandHandlers_full).filter(c => c !== 'default').join(', ');
-    await telegramService_full.sendMessage(chatId, `Comando não reconhecido. Use: ${availableCommands}. Qual desses você quer?`);
+    const availableCommands = Object.keys(commandHandlers).filter(c => c !== 'default').join(', ');
+    await telegramService.sendMessage(chatId, `Comando não reconhecido. Use: ${availableCommands}. Qual desses você quer?`);
   }
 };
 
+// --- 5. HANDLER PRINCIPAL (ORQUESTRADOR) ---
 module.exports = async function handler(req, res) {
   if (req.method !== 'POST') return res.status(200).json({ ok: true, message: 'Charlene online.' });
   const update = req.body;
@@ -188,41 +188,47 @@ module.exports = async function handler(req, res) {
   const userId = message.from.id.toString();
 
   try {
-    await databaseService_full.saveMessage(userId, text, 'usuario');
     const [command, ...argsArray] = text.split(' ');
     const args = argsArray.join(' ');
 
     if (text.startsWith('/')) {
-      const commandFunction = commandHandlers_full[command] || commandHandlers_full.default;
+      await databaseService.saveMessage(userId, text, 'usuario'); // Salva o comando
+      const commandFunction = commandHandlers[command] || commandHandlers.default;
       await commandFunction(chatId, userId, args);
     } else {
+      const promptTemplate = promptBuilder.getPromptTemplate();
+      // Se estiver em modo de segurança, apenas envia a mensagem de erro sem consultar o Gemini.
+      if (promptTemplate.startsWith('ERRO 404')) {
+          return await telegramService.sendMessage(chatId, promptTemplate);
+      }
+      
+      await databaseService.saveMessage(userId, text, 'usuario');
       const [contexto, empresas, perfil] = await Promise.all([
-        databaseService_full.getRecentContext(userId),
-        databaseService_full.getCompanies(20),
+        databaseService.getRecentContext(userId),
+        databaseService.getCompanies(20),
         // TODO: Implementar a busca de `perfil_usuario`
       ]);
 
-      const promptTemplate = promptBuilder.getPromptTemplate();
       const promptData = {
         mensagem_usuario: text,
         historico_conversa: contexto.map(c => `[${c.tipo}] ${c.mensagem}`).join('\n'),
         lista_empresas: empresas.length > 0 ? empresas.map(e => e.nome).join(', ') : 'Nenhuma empresa cadastrada.',
         perfil_usuario: perfil || 'Não definido',
         dados_pessoais_usuario: 'Não definido',
-        comandos_disponiveis: Object.keys(commandHandlers_full).filter(c => c !== 'default').join(', '),
+        comandos_disponiveis: Object.keys(commandHandlers).filter(c => c !== 'default' && c !== '/debug').join(', '),
         modulo_fe_ativo: 'false',
       };
 
       const finalPrompt = promptBuilder.build(promptTemplate, promptData);
-      const resposta = await aiService_full.generateResponse(finalPrompt);
+      const resposta = await aiService.generateResponse(finalPrompt);
 
-      await databaseService_full.saveMessage(userId, resposta, 'charlene');
-      await telegramService_full.sendMessage(chatId, resposta);
+      await databaseService.saveMessage(userId, resposta, 'charlene');
+      await telegramService.sendMessage(chatId, resposta);
     }
     return res.status(200).json({ ok: true });
   } catch (error) {
     console.error('Erro fatal no handler:', error);
-    await telegramService_full.sendMessage(chatId, `Ops, tive um problema interno sério. Já registrei o erro para análise. Por favor, tente de novo.`);
+    await telegramService.sendMessage(chatId, `Ops, tive um problema interno sério. Já registrei o erro para análise. Por favor, tente de novo.`);
     return res.status(200).json({ ok: true });
   }
 };
