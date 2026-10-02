@@ -1,39 +1,29 @@
 // ============================================================
-// CHARLENE v4.3 — EXECUÇÃO NATURAL NA CONVERSA (FUNCTION CALLING)
+// CHARLENE v5.0 — AUTO-VARREDURA + CHAMADOS DE EVOLUÇÃO
 // ============================================================
-// Chefe, nesta versão você fala normalmente. A Charlene entende
-// a intenção, executa ações reais no sistema e responde como
-// uma operadora de verdade. Sem precisar lembrar comandos.
+// Chefe, esta versão elimina a dependência de comandos:
+//
+// 1. A IA usa ferramentas diretamente (function calling).
+// 2. A varredura do sistema é contínua e vira autorização
+//    para ela mesma executar o que está disponível.
+// 3. Quando ela NÃO sabe fazer algo, ela mesma abre um
+//    "chamado de evolução" com a descrição do que falta.
 //
 // ============================================================
-// SQL OPCIONAL (execute uma vez no Supabase SQL Editor):
+// SQL NECESSÁRIO (execute uma vez no Supabase SQL Editor):
 //
-// create table if not exists memoria_charlene (
+// create table if not exists necessidades_charlene (
 //   id bigint generated always as identity primary key,
 //   usuario_id text not null,
-//   tipo text default 'nota',
-//   conteudo text not null,
+//   pedido text not null,
+//   contexto text,
+//   status text default 'aberto',
+//   resolvido_como text,
 //   criado_em timestamptz default now()
 // );
 //
-// create table if not exists skills_charlene (
-//   id bigint generated always as identity primary key,
-//   nome text not null,
-//   descricao text,
-//   ativo boolean default true,
-//   criado_em timestamptz default now()
-// );
-//
-// create table if not exists eventos_ooda (
-//   id bigint generated always as identity primary key,
-//   usuario_id text,
-//   etapa text,
-//   detalhe text,
-//   resultado text,
-//   criado_em timestamptz default now()
-// );
-//
-// Se as tabelas não existirem, a Charlene segue 100% funcional.
+// Tabelas opcionais que continuam funcionando se existirem:
+// memoria_charlene, skills_charlene, eventos_ooda.
 // ============================================================
 
 const { createClient } = require('@supabase/supabase-js');
@@ -86,16 +76,6 @@ async function safeQuery(fn, fallback = null) {
   }
 }
 
-function normalizarTexto(texto) {
-  return texto
-    .toLowerCase()
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .replace(/[^\w\s]/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
-}
-
 // --- 3. SERVIÇO DO TELEGRAM ---
 const telegramService = {
   async sendMessage(chatId, text) {
@@ -129,7 +109,7 @@ const telegramService = {
   },
 };
 
-// --- 4. SERVIÇO DE BANCO DE DADOS ---
+// --- 4. BANCO DE DADOS ---
 const databaseService = {
   saveMessage: (userId, mensagem, tipo) =>
     supabase.from('conversas_charlene').insert({
@@ -243,11 +223,7 @@ const databaseService = {
   saveIdea: async (userId, titulo) => {
     const { data, error } = await supabase
       .from('ideias_negocio')
-      .insert({
-        usuario_id: userId,
-        titulo,
-        status: 'pendente',
-      })
+      .insert({ usuario_id: userId, titulo, status: 'pendente' })
       .select()
       .single();
 
@@ -285,11 +261,7 @@ const databaseService = {
   saveMemory: async (userId, conteudo, tipo = 'nota') => {
     const { data, error } = await supabase
       .from('memoria_charlene')
-      .insert({
-        usuario_id: userId,
-        conteudo,
-        tipo,
-      })
+      .insert({ usuario_id: userId, conteudo, tipo })
       .select()
       .single();
 
@@ -337,6 +309,45 @@ const databaseService = {
     return data?.conteudo || 'Não definido';
   },
 
+  registrarNecessidade: async (userId, pedido, contexto = '') => {
+    try {
+      const { data, error } = await supabase
+        .from('necessidades_charlene')
+        .insert({ usuario_id: userId, pedido, contexto, status: 'aberto' })
+        .select()
+        .single();
+
+      if (error) {
+        console.error('DB Error (registrarNecessidade):', error.message);
+        return null;
+      }
+      return data;
+    } catch (e) {
+      console.error('registrarNecessidade exception:', e.message || e);
+      return null;
+    }
+  },
+
+  listarNecessidades: async (userId, limit = 20) => {
+    try {
+      const { data, error } = await supabase
+        .from('necessidades_charlene')
+        .select('id, pedido, status, criado_em')
+        .eq('usuario_id', userId)
+        .order('criado_em', { ascending: false })
+        .limit(limit);
+
+      if (error) {
+        console.error('DB Error (listarNecessidades):', error.message);
+        return [];
+      }
+      return data || [];
+    } catch (e) {
+      console.error('listarNecessidades exception:', e.message || e);
+      return [];
+    }
+  },
+
   logOoda: async (etapa, detalhe, userId = 'sistema', resultado = '') => {
     try {
       await supabase.from('eventos_ooda').insert({
@@ -351,27 +362,25 @@ const databaseService = {
   },
 };
 
-// --- 5. FUNÇÕES QUE A IA PODE CHAMAR (TOOLS) ---
-// Aqui a gente define o que a Charlene pode fazer de verdade.
+// --- 5. FERRAMENTAS (TOOLS) QUE A IA PODE USAR ---
 const TOOLS = [
+  {
+    name: 'mapear_sistema',
+    description: 'Faz uma varredura completa do sistema: chamados, empresas, ideias, memórias e skills. Use quando o Chefe quiser saber o estado geral ou o que existe disponível.',
+    parameters: { type: 'object', properties: {} },
+  },
   {
     name: 'listar_chamados',
     description: 'Lista os chamados abertos no sistema.',
-    parameters: {
-      type: 'object',
-      properties: {},
-    },
+    parameters: { type: 'object', properties: {} },
   },
   {
     name: 'fechar_chamado',
-    description: 'Fecha um chamado pelo ID ou pelo número da lista exibida.',
+    description: 'Fecha um chamado pelo ID ou pelo número da lista exibida (1, 2, 3...).',
     parameters: {
       type: 'object',
       properties: {
-        id_ou_numero: {
-          type: 'string',
-          description: 'ID do chamado ou número da lista (1, 2, 3...)',
-        },
+        id_ou_numero: { type: 'string', description: 'ID do chamado ou número da lista' },
       },
       required: ['id_ou_numero'],
     },
@@ -379,10 +388,7 @@ const TOOLS = [
   {
     name: 'listar_empresas',
     description: 'Lista as empresas cadastradas.',
-    parameters: {
-      type: 'object',
-      properties: {},
-    },
+    parameters: { type: 'object', properties: {} },
   },
   {
     name: 'criar_empresa',
@@ -390,29 +396,20 @@ const TOOLS = [
     parameters: {
       type: 'object',
       properties: {
-        nome: {
-          type: 'string',
-          description: 'Nome completo da empresa',
-        },
+        nome: { type: 'string', description: 'Nome completo da empresa' },
       },
       required: ['nome'],
     },
   },
   {
     name: 'mostrar_plano_dia',
-    description: 'Mostra o plano/foco do dia do usuário.',
-    parameters: {
-      type: 'object',
-      properties: {},
-    },
+    description: 'Mostra o plano/foco do dia do Chefe.',
+    parameters: { type: 'object', properties: {} },
   },
   {
     name: 'listar_ideias',
-    description: 'Lista ideias de negócio pendentes.',
-    parameters: {
-      type: 'object',
-      properties: {},
-    },
+    description: 'Lista as ideias de negócio pendentes.',
+    parameters: { type: 'object', properties: {} },
   },
   {
     name: 'salvar_ideia',
@@ -420,10 +417,7 @@ const TOOLS = [
     parameters: {
       type: 'object',
       properties: {
-        titulo: {
-          type: 'string',
-          description: 'Descrição resumida da ideia',
-        },
+        titulo: { type: 'string', description: 'Descrição resumida da ideia' },
       },
       required: ['titulo'],
     },
@@ -434,56 +428,81 @@ const TOOLS = [
     parameters: {
       type: 'object',
       properties: {
-        conteudo: {
-          type: 'string',
-          description: 'Texto a ser memorizado',
-        },
+        conteudo: { type: 'string', description: 'Texto a ser memorizado' },
       },
       required: ['conteudo'],
     },
   },
   {
     name: 'ver_memorias',
-    description: 'Mostra as memórias salvas.',
-    parameters: {
-      type: 'object',
-      properties: {},
-    },
+    description: 'Mostra as memórias salvas do Chefe.',
+    parameters: { type: 'object', properties: {} },
   },
   {
-    name: 'varredura_sistema',
-    description: 'Mostra um panorama geral do sistema.',
-    parameters: {
-      type: 'object',
-      properties: {},
-    },
+    name: 'listar_necessidades',
+    description: 'Lista os chamados de evolução (o que a Charlene ainda não sabe fazer).',
+    parameters: { type: 'object', properties: {} },
   },
   {
-    name: 'diagnostico_sistema',
-    description: 'Mostra diagnóstico com contadores das tabelas.',
+    name: 'registrar_necessidade',
+    description: 'Abre um chamado de evolução quando o Chefe pede algo que a Charlene ainda não tem ferramenta para fazer.',
     parameters: {
       type: 'object',
-      properties: {},
+      properties: {
+        pedido: { type: 'string', description: 'Descrição clara do que falta aprender/fazer' },
+        contexto: { type: 'string', description: 'Contexto ou detalhe adicional do pedido' },
+      },
+      required: ['pedido'],
     },
   },
 ];
 
-// --- 6. EXECUTOR DE FUNÇÕES ---
-// Aqui o código realmente executa o que a IA pediu.
-async function executarFuncao(nome, args, userId, chatId) {
-  console.log(`[EXECUTAR] ${nome}(${JSON.stringify(args)})`);
+// --- 6. EXECUTOR DAS FERRAMENTAS ---
+async function executarFuncao(nome, args, userId) {
+  console.log(`[EXECUTAR] ${nome}(${JSON.stringify(args || {})})`);
 
   switch (nome) {
+    case 'mapear_sistema': {
+      const [chamados, empresas, ideias, memorias, numEmpresas, numMemorias, numSkills, numNecessidades] = await Promise.all([
+        databaseService.getOpenTickets(20),
+        databaseService.getCompanies(50),
+        safeQuery(() => databaseService.getPendingIdeas(userId, 10), []),
+        safeQuery(() => databaseService.getMemory(userId, 10), []),
+        databaseService.getCount('empresas'),
+        safeQuery(() => databaseService.getCount('memoria_charlene'), 0),
+        safeQuery(() => databaseService.getCount('skills_charlene'), 0),
+        safeQuery(() => databaseService.getCount('necessidades_charlene'), 0),
+      ]);
+
+      const ferramentas = TOOLS.map((t) => `• ${t.name} — ${t.description}`).join('\n');
+
+      return [
+        'MAPEAMENTO DO SISTEMA:',
+        `• Chamados abertos: ${chamados.length}`,
+        `• Empresas cadastradas: ${numEmpresas}`,
+        `• Ideias pendentes: ${ideias.length}`,
+        `• Memórias salvas: ${numMemorias}`,
+        `• Skills ativas: ${numSkills}`,
+        `• Chamados de evolução: ${numNecessidades}`,
+        '',
+        'FERRAMENTAS DISPONÍVEIS PARA EU USAR:',
+        ferramentas,
+      ].join('\n');
+    }
+
     case 'listar_chamados': {
       const chamados = await databaseService.getOpenTickets(20);
-      if (chamados.length === 0) return 'Nenhum chamado aberto no momento.';
-      return `Chamados abertos (${chamados.length}):\n${chamados.map((c, i) => `${i + 1}. [ID ${c.id}] ${c.empresa_nome || 'Sem empresa'} — ${c.descricao ? c.descricao.substring(0, 50) : 'Sem descrição'}`).join('\n')}`;
+      if (chamados.length === 0) return 'Nenhum chamado aberto no momento, Chefe.';
+      return `Chamados abertos (${chamados.length}):\n${chamados
+        .map((c, i) => `${i + 1}. [ID ${c.id}] ${c.empresa_nome || 'Sem empresa'} — ${c.descricao ? c.descricao.substring(0, 60) : 'Sem descrição'}`)
+        .join('\n')}`;
     }
 
     case 'fechar_chamado': {
-      const idOuNumero = args.id_ou_numero;
-      const chamados = await databaseService.getOpenTickets(50);
+      const idOuNumero = args && args.id_ou_numero ? String(args.id_ou_numero) : '';
+      if (!idOuNumero) return 'Preciso do ID ou número do chamado para fechar.';
 
+      const chamados = await databaseService.getOpenTickets(50);
       if (chamados.length === 0) return 'Não há chamados abertos para fechar.';
 
       const numero = Number(idOuNumero);
@@ -500,294 +519,270 @@ async function executarFuncao(nome, args, userId, chatId) {
       const resultado = await databaseService.closeTicket(alvo.id);
       if (resultado) {
         await databaseService.logOoda('acao', `Fechar chamado ${alvo.id}`, userId, 'sucesso');
-        return `Chamado ${alvo.id} fechado com sucesso.`;
+        return `Chamado ${alvo.id} fechado com sucesso, Chefe.`;
       }
       return `Erro ao fechar o chamado ${alvo.id}.`;
     }
 
     case 'listar_empresas': {
       const empresas = await databaseService.getCompanies(50);
-      if (empresas.length === 0) return 'Nenhuma empresa cadastrada ainda.';
+      if (empresas.length === 0) return 'Nenhuma empresa cadastrada ainda, Chefe.';
       return `Empresas cadastradas:\n${empresas.map((e, i) => `${i + 1}. ${e.nome}`).join('\n')}`;
     }
 
     case 'criar_empresa': {
-      const nome = args.nome;
+      const nome = args && args.nome ? String(args.nome).trim() : '';
       if (!nome) return 'Nome da empresa não informado.';
       const empresa = await databaseService.createCompany(nome);
       if (empresa) {
         await databaseService.logOoda('acao', `Criar empresa: ${nome}`, userId, 'sucesso');
         return `Empresa "${nome}" criada com sucesso. ID: ${empresa.id}.`;
       }
-      return `Erro ao criar a empresa "${nome}". Pode ser que já exista.`;
+      return `Erro ao criar a empresa "${nome}". Pode ser que já exista ou que falte alguma coluna.`;
     }
 
     case 'mostrar_plano_dia': {
       const plano = await databaseService.getDailyPlan(userId);
-      if (plano?.conteudo) return `Plano de hoje:\n${plano.conteudo}`;
-      return 'Ainda não temos plano definido para hoje.';
+      if (plano && plano.conteudo) return `Plano de hoje, Chefe:\n${plano.conteudo}`;
+      return 'Ainda não temos plano definido para hoje, Chefe.';
     }
 
     case 'listar_ideias': {
       const ideias = await databaseService.getPendingIdeas(userId, 10);
-      if (ideias.length === 0) return 'Nenhuma ideia registrada.';
-      return `Ideias pendentes (${ideias.length}):\n${ideias.map((idea, i) => `${i + 1}. ${idea.titulo}`).join('\n')}`;
+      if (ideias.length === 0) return 'Nenhuma ideia registrada, Chefe.';
+      return `Ideias pendentes (${ideias.length}):\n${ideias.map((ideia, i) => `${i + 1}. ${ideia.titulo}`).join('\n')}`;
     }
 
     case 'salvar_ideia': {
-      const titulo = args.titulo;
+      const titulo = args && args.titulo ? String(args.titulo).trim() : '';
       if (!titulo) return 'Título da ideia não informado.';
       const ideia = await databaseService.saveIdea(userId, titulo);
-      if (ideia) return `Ideia registrada: "${titulo}".`;
-      return 'Erro ao salvar a ideia.';
+      if (ideia) return `Ideia registrada com sucesso: "${titulo}".`;
+      return 'Erro ao salvar a ideia. A tabela ideias_negocio pode não existir.';
     }
 
     case 'salvar_memoria': {
-      const conteudo = args.conteudo;
+      const conteudo = args && args.conteudo ? String(args.conteudo).trim() : '';
       if (!conteudo) return 'Conteúdo da memória não informado.';
       const memoria = await databaseService.saveMemory(userId, conteudo, 'nota');
-      if (memoria) return `Memorizado: "${conteudo}".`;
-      return 'Erro ao salvar a memória.';
+      if (memoria) return `Memorizado com sucesso: "${conteudo}".`;
+      return 'Erro ao salvar a memória. A tabela memoria_charlene pode não existir.';
     }
 
     case 'ver_memorias': {
       const memorias = await databaseService.getMemory(userId, 10);
-      if (memorias.length === 0) return 'Ainda não tenho memórias salvas.';
+      if (memorias.length === 0) return 'Ainda não tenho memórias salvas, Chefe.';
       return `Memórias essenciais:\n${memorias.map((m) => `• [${m.tipo}] ${m.conteudo}`).join('\n')}`;
     }
 
-    case 'varredura_sistema': {
-      const [chamados, ideias, numEmpresas, numMemorias, numSkills] = await Promise.all([
-        databaseService.getOpenTickets(50),
-        databaseService.getPendingIdeas(userId, 10),
-        databaseService.getCount('empresas'),
-        safeQuery(() => databaseService.getCount('memoria_charlene'), 0),
-        safeQuery(() => databaseService.getCount('skills_charlene'), 0),
-      ]);
-      return `Panorama do sistema:\n• Chamados abertos: ${chamados.length}\n• Ideias pendentes: ${ideias.length}\n• Empresas cadastradas: ${numEmpresas}\n• Memórias salvas: ${numMemorias}\n• Skills ativas: ${numSkills}`;
+    case 'listar_necessidades': {
+      const necessidades = await databaseService.listarNecessidades(userId, 20);
+      if (necessidades.length === 0) return 'Nenhum chamado de evolução registrado, Chefe.';
+      return `Chamados de evolução (${necessidades.length}):\n${necessidades
+        .map((n, i) => `${i + 1}. [${n.status}] ${n.pedido}`)
+        .join('\n')}`;
     }
 
-    case 'diagnostico_sistema': {
-      const tables = ['chamados', 'empresas', 'equipamentos', 'orcamentos', 'ideias_negocio', 'tarefas_pessoais'];
-      const counts = await Promise.all(tables.map((table) => safeQuery(() => databaseService.getCount(table), 'ERRO')));
-      return `Diagnóstico do sistema:\n${tables.map((table, i) => `• ${table}: ${counts[i]}`).join('\n')}`;
+    case 'registrar_necessidade': {
+      const pedido = args && args.pedido ? String(args.pedido).trim() : '';
+      const contexto = args && args.contexto ? String(args.contexto).trim() : '';
+      if (!pedido) return 'Não consegui identificar o que registrar como necessidade.';
+
+      const registro = await databaseService.registrarNecessidade(userId, pedido, contexto);
+      if (registro) {
+        await databaseService.logOoda('acao', `Necessidade registrada: ${pedido}`, userId, 'sucesso');
+        return `Abri um chamado de evolução com a descrição do que ainda não sei fazer. O Chefe poderá evoluir minhas capacidades a partir dele.`;
+      }
+      return 'Erro ao registrar o chamado de evolução. A tabela necessidades_charlene pode não existir.';
     }
 
     default:
-      return `Ainda não sei executar a função "${nome}".`;
+      return `Ainda não sei executar a ação "${nome}". Vou registrar como necessidade.`;
   }
 }
 
-// --- 7. SERVIÇO DE IA COM FUNCTION CALLING ---
+// --- 7. PROMPT DO SISTEMA ---
 const AI_SYSTEM_INSTRUCTION = `
 Você é Charlene, a extensão operacional e estratégica do Chefe.
 
-REGRA DE OURO — HONESTIDADE ABSOLUTA
-Você só pode executar ações através das ferramentas que estão disponíveis.
-Se não houver ferramenta para o que o Chefe pediu, diga com honestidade:
-"Chefe, ainda não tenho essa habilidade. Posso registrar como necessidade?"
+VARREDURA CONTÍNUA DO SISTEMA (esta é a sua visão atual):
+{{varredura}}
 
-COMO FUNCIONA
-- Você recebe ferramentas (functions).
-- Se precisar de dados ou executar algo, chame a ferramenta correta.
-- Você pode chamar várias ferramentas em sequência se o pedido tiver várias partes.
-- NUNCA diga que fez algo sem ter chamado a ferramenta.
-- Se precisar confirmar antes de executar uma ação importante, pergunte ao Chefe.
+CAPACIDADES DISPONÍVEIS (ferramentas reais que você pode chamar):
+{{capacidades}}
+
+REGRAS ABSOLUTAS — LEIA COM ATENÇÃO:
+
+1. NUNCA peça para o Chefe digitar um comando. Se existir uma ferramenta
+   para o que ele pediu, chame a ferramenta e execute. Você tem permissão.
+2. NUNCA diga que fez algo que não fez. Se uma ferramenta foi chamada e
+   retornou sucesso, aí sim você pode confirmar. Se não chamou, não confirme.
+3. Se o Chefe pedir algo que NENHUMA ferramenta consegue fazer, chame
+   "registrar_necessidade" com uma descrição clara do que falta. Depois
+   responda honestamente: você registrou o chamado de evolução e não sabe
+   fazer isso ainda.
+4. Você pode chamar várias ferramentas em sequência se o pedido tiver
+   várias partes. Exemplo: criar empresa e depois listar empresas.
+5. Sempre que a mensagem envolver uma ação concreta (criar, listar, fechar,
+   salvar, ver, analisar), USE A FERRAMENTA correspondente. Não fique só
+   conversando quando tem ação para executar.
+6. A decisão final é sempre do Chefe.
+7. Se não entender, pergunte. Nunca invente.
+8. Não use markdown. Fale texto corrido, direto e leal.
 
 TOM
-- Direta, objetiva, leal.
 - Chame o usuário de "Chefe".
-- Sempre sugira o próximo passo.
-- Não use markdown.
-
-CONTEXTO DO CHEFE
-{{contexto_extra}}
+- Seja direta, objetiva e antecipatória.
+- Termine com o próximo passo ou uma sugestão.
 `;
 
-const aiService = {
-  async processarConversa(userMessage, context, history) {
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/${config.geminiModel}:generateContent?key=${config.geminiApiKey}`;
+function buildSystemInstruction(context) {
+  const capacidades = TOOLS
+    .map((t) => `• ${t.name} — ${t.description}`)
+    .join('\n');
 
-    const parteHistorico = history || 'Sem histórico recente.';
-    const parteMemoria = context.memoria || 'Sem memória essencial.';
-    const parteEmpresas = context.empresas || 'Nenhuma empresa cadastrada.';
-    const partePerfil = context.perfil || 'Não definido.';
-    const parteDados = context.dados || 'Não definido.';
-    const parteSkills = context.skills || 'Nenhuma skill registrada.';
-    const parteData = context.agora || turnDateBrasil();
+  const varredura = [
+    `Data e hora: ${context.agora || turnDateBrasil()}`,
+    `Perfil do Chefe: ${context.perfil || 'Não definido'}`,
+    `Dados pessoais: ${context.dados || 'Não definido'}`,
+    `Empresas cadastradas: ${context.empresas || 'Nenhuma'}`,
+    `Chamados abertos: ${context.chamados || 'Nenhum'}`,
+    `Ideias pendentes: ${context.ideias || 'Nenhuma'}`,
+    `Memórias essenciais: ${context.memoria || 'Nenhuma'}`,
+    `Skills registradas: ${context.skills || 'Nenhuma'}`,
+    `Histórico recente:\n${context.historico || 'Sem histórico recente.'}`,
+  ].join('\n\n');
 
-    const contextoExtra = [
-      `DATA E HORA: ${parteData}`,
-      `PERFIL DO CHEFE: ${partePerfil}`,
-      `DADOS PESSOAIS DO CHEFE: ${parteDados}`,
-      `EMPRESAS MONITORADAS: ${parteEmpresas}`,
-      `SKILLS DA CHARLENE: ${parteSkills}`,
-      `MEMÓRIA ESSENCIAL: ${parteMemoria}`,
-      `HISTÓRICO RECENTE:\n${parteHistorico}`,
-    ].join('\n\n');
+  return AI_SYSTEM_INSTRUCTION
+    .replace('{{varredura}}', varredura)
+    .replace('{{capacidades}}', capacidades);
+}
 
-    const systemInstruction = AI_SYSTEM_INSTRUCTION.replace('{{contexto_extra}}', contextoExtra);
+// --- 8. CHAMADA AO GEMINI (COM FUNCTION CALLING) ---
+const GEMINI_URL = () =>
+  `https://generativelanguage.googleapis.com/v1beta/models/${config.geminiModel}:generateContent?key=${config.geminiApiKey}`;
 
-    const contents = [
-      {
-        role: 'user',
-        parts: [{ text: userMessage }],
+async function chamarGemini(systemInstruction, contents) {
+  const body = {
+    systemInstruction: {
+      parts: [{ text: systemInstruction }],
+    },
+    contents,
+    tools: [{ functionDeclarations: TOOLS }],
+    toolConfig: {
+      functionCallingConfig: {
+        mode: 'AUTO',
       },
-    ];
+    },
+    generationConfig: {
+      temperature: 0.3,
+      maxOutputTokens: 1500,
+    },
+  };
 
-    const body = {
-      systemInstruction: {
-        parts: [{ text: systemInstruction }],
-      },
-      contents,
-      tools: [{ functionDeclarations: TOOLS }],
-      toolConfig: {
-        functionCallingConfig: {
-          mode: 'AUTO',
-        },
-      },
-      generationConfig: {
-        temperature: 0.3,
-        maxOutputTokens: 1500,
-      },
-    };
+  try {
+    const response = await fetch(GEMINI_URL(), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
 
-    try {
-      const response = await fetch(url, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
-      });
+    const data = await response.json();
 
-      const data = await response.json();
-      console.log('Gemini response:', JSON.stringify(data, null, 2));
-
-      return data;
-    } catch (error) {
-      console.error('Erro ao chamar a API Gemini:', error.message || error);
-      return {
-        error: true,
-        message: 'Chefe, estou com dificuldade para processar meu raciocínio agora. Tente novamente em instantes.',
-      };
-    }
-  },
-};
-
-// --- 8. ORQUESTRADOR PRINCIPAL ---
-// Coordena a conversa com a IA, executa funções e devolve respostas.
-async function conversarComCharlene(userMessage, context, userId, chatId) {
-  let respostaIA = await aiService.processarConversa(userMessage, context, context.historico);
-
-  // Loop de function calling (permite múltiplas chamadas)
-  let tentativas = 0;
-  const maxTentativas = 5;
-
-  while (tentativas < maxTentativas) {
-    tentativas++;
-
-    if (respostaIA.error) {
-      return respostaIA.message;
+    if (!response.ok) {
+      console.error('Gemini HTTP error:', response.status, JSON.stringify(data, null, 2));
+      return { error: true, message: 'Chefe, minha conexão com o núcleo de IA falhou. Pode repetir?' };
     }
 
-    const candidato = respostaIA.candidates?.[0];
+    return data;
+  } catch (error) {
+    console.error('Gemini fetch error:', error.message || error);
+    return { error: true, message: 'Chefe, estou com dificuldade para processar meu raciocínio agora. Tente novamente em instantes.' };
+  }
+}
+
+// --- 9. ORQUESTRADOR DA CONVERSA ---
+async function conversarComCharlene(mensagem, context, userId) {
+  const systemInstruction = buildSystemInstruction(context);
+
+  let resposta = await chamarGemini(systemInstruction, [
+    { role: 'user', parts: [{ text: mensagem }] },
+  ]);
+
+  const maxTentativas = 6;
+
+  for (let tentativa = 0; tentativa < maxTentativas; tentativa++) {
+    if (resposta.error) {
+      return resposta.message;
+    }
+
+    const candidato = resposta.candidates && resposta.candidates[0];
     if (!candidato) {
-      return 'Chefe, recebi uma resposta vazia da minha conexão neural. Pode repetir?';
+      return 'Chefe, recebi uma resposta vazia do núcleo de IA. Pode repetir?';
     }
 
-    // Se a IA decidiu chamar funções
-    const functionCalls = candidato.content?.parts
-      ?.filter((part) => part.functionCall)
-      ?.map((part) => part.functionCall);
+    const parts = (candidato.content && candidato.content.parts) || [];
+    const functionCalls = parts
+      .filter((p) => p.functionCall)
+      .map((p) => p.functionCall);
 
-    if (!functionCalls || functionCalls.length === 0) {
-      // Resposta final em texto
-      return candidato.content?.parts?.[0]?.text?.trim() || 'Chefe, não consegui formular a resposta.';
+    if (functionCalls.length === 0) {
+      const texto = parts.map((p) => p.text).filter(Boolean).join('\n').trim();
+      return texto || 'Chefe, não consegui formular uma resposta. Pode repetir?';
     }
 
-    // Executa cada função chamada
+    // Executa as ferramentas chamadas
     const functionResponses = [];
     for (const call of functionCalls) {
       const nome = call.name;
       const args = call.args || {};
-      const resultado = await executarFuncao(nome, args, userId, chatId);
+      const resultado = await executarFuncao(nome, args, userId);
       functionResponses.push({
         name: nome,
         response: { result: resultado },
       });
     }
 
-    // Envia os resultados de volta para a IA
-    const newContent = {
-      role: 'user',
-      parts: functionResponses.map((fr) => ({
-        functionResponse: {
-          name: fr.name,
-          response: fr.response,
-        },
-      })),
-    };
-
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/${config.geminiModel}:generateContent?key=${config.geminiApiKey}`;
-
-    const newBody = {
-      systemInstruction: {
-        parts: [{ text: AI_SYSTEM_INSTRUCTION.replace('{{contexto_extra}}', '') }],
+    // Monta a continuação da conversa com os resultados das ferramentas
+    const continuacao = [
+      { role: 'user', parts: [{ text: mensagem }] },
+      { role: 'model', parts },
+      {
+        role: 'user',
+        parts: functionResponses.map((fr) => ({
+          functionResponse: fr,
+        })),
       },
-      contents: [
-        {
-          role: 'user',
-          parts: [{ text: userMessage }],
-        },
-        {
-          role: 'model',
-          parts: candidato.content.parts,
-        },
-        newContent,
-      ],
-      tools: [{ functionDeclarations: TOOLS }],
-      generationConfig: {
-        temperature: 0.3,
-        maxOutputTokens: 1500,
-      },
-    };
+    ];
 
-    try {
-      const response = await fetch(url, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(newBody),
-      });
-
-      respostaIA = await response.json();
-    } catch (error) {
-      console.error('Erro no segundo turno Gemini:', error.message || error);
-      return 'Chefe, executei as ações, mas tive dificuldade para sintetizar a resposta. Verifique se deu certo.';
-    }
+    resposta = await chamarGemini(systemInstruction, continuacao);
   }
 
-  return 'Chefe, precisei fazer várias chamadas e atingi o limite de processamento. As ações foram executadas, mas peço que verifique.';
+  return 'Chefe, executei as ações, mas atingi o limite de processamento. Verifique se ficou tudo certo.';
 }
 
-// --- 9. HANDLERS DE COMANDOS (MANTIDOS PRA QUEM PREFERE) ---
+// --- 10. COMANDOS (MANTIDOS COMO ATALHO OPCIONAL) ---
 const commandHandlers = {
   '/start': async (chatId, userId) => {
     await telegramService.sendMessage(
       chatId,
       '👋 Chefe, Charlene online.\n\n' +
-      'Agora você pode falar comigo naturalmente. Exemplos:\n' +
-      '• "cria uma empresa chamada X"\n' +
+      'Agora você fala comigo naturalmente e EU EXECUTO.\n\n' +
+      'Exemplos:\n' +
+      '• "cria uma empresa chamada Teste"\n' +
       '• "mostra os chamados abertos"\n' +
       '• "fecha o chamado 1"\n' +
-      '• "salva na memória: revisar orçamentos toda sexta"\n\n' +
-      'Se eu não souber fazer algo, vou dizer honestamente.'
+      '• "salva na memória: revisar orçamentos toda sexta"\n' +
+      '• "faz uma varredura do sistema"\n\n' +
+      'Se eu não souber fazer algo, eu mesma abro um chamado de evolução.'
     );
   },
 };
 
-// --- 10. HANDLER PRINCIPAL ---
+// --- 11. HANDLER PRINCIPAL ---
 module.exports = async function handler(req, res) {
   if (req.method !== 'POST') {
-    return res.status(200).json({ ok: true, message: 'Charlene v4.3 online.' });
+    return res.status(200).json({ ok: true, message: 'Charlene v5.0 online.' });
   }
 
   const update = req.body;
@@ -799,15 +794,15 @@ module.exports = async function handler(req, res) {
 
   const chatId = message.chat.id;
   const text = (message.text || message.caption).trim();
-  const userId = message.from.id.toString();
+  const userId = String(message.from.id);
 
   try {
     await databaseService.saveMessage(userId, text, 'usuario');
     await databaseService.logOoda('observar', `Mensagem: ${text.slice(0, 100)}`, userId);
 
-    const command = text.split(' ')[0].toLowerCase();
-
+    // Atalhos de comando continuam funcionando
     if (text.startsWith('/')) {
+      const command = text.split(' ')[0].toLowerCase();
       const handler = commandHandlers[command] || commandHandlers['/start'];
       await handler(chatId, userId);
       await databaseService.logOoda('agir', `Comando: ${command}`, userId, 'executado');
@@ -816,14 +811,18 @@ module.exports = async function handler(req, res) {
 
     await telegramService.sendChatAction(chatId, 'typing');
 
-    const [contexto, empresas, perfil, dadosPessoais, memorias, skills] = await Promise.all([
-      databaseService.getRecentContext(userId, 10),
-      databaseService.getCompanies(30),
-      safeQuery(() => databaseService.getPerfil(userId), 'Não definido'),
-      safeQuery(() => databaseService.getDadosPessoais(userId), 'Não definido'),
-      safeQuery(() => databaseService.getMemory(userId, 10), []),
-      safeQuery(() => databaseService.getSkills(), []),
-    ]);
+    // Varredura contínua — é a autorização da Charlene
+    const [contexto, empresas, perfil, dadosPessoais, memorias, skills, chamadosAbertos, ideiasPendentes] =
+      await Promise.all([
+        databaseService.getRecentContext(userId, 10),
+        databaseService.getCompanies(50),
+        safeQuery(() => databaseService.getPerfil(userId), 'Não definido'),
+        safeQuery(() => databaseService.getDadosPessoais(userId), 'Não definido'),
+        safeQuery(() => databaseService.getMemory(userId, 10), []),
+        safeQuery(() => databaseService.getSkills(), []),
+        databaseService.getOpenTickets(20),
+        safeQuery(() => databaseService.getPendingIdeas(userId, 10), []),
+      ]);
 
     const historicoFormatado = contexto
       .map((c) => `[${c.tipo === 'usuario' ? 'Chefe' : 'Charlene'}] ${c.mensagem}`)
@@ -837,17 +836,27 @@ module.exports = async function handler(req, res) {
       .map((s) => `• ${s.nome} — ${s.descricao || 'Sem descrição'}`)
       .join('\n');
 
+    const chamadosResumo = chamadosAbertos.length > 0
+      ? chamadosAbertos.map((c) => `[${c.id}] ${c.descricao || 'Sem descrição'}`).join('; ')
+      : 'Nenhum chamado aberto.';
+
+    const ideiasResumo = ideiasPendentes.length > 0
+      ? ideiasPendentes.map((i) => i.titulo).join('; ')
+      : 'Nenhuma ideia pendente.';
+
     const context = {
+      agora: turnDateBrasil(),
       historico: historicoFormatado || 'Sem histórico recente.',
       memoria: memoriaFormatada || 'Sem memória essencial.',
-      empresas: empresas.map((e) => e.nome).join(', '),
+      empresas: empresas.map((e) => e.nome).join(', ') || 'Nenhuma empresa cadastrada.',
       perfil: perfil || 'Não definido',
       dados: dadosPessoais || 'Não definido',
       skills: skillsFormatada || 'Nenhuma skill registrada.',
-      agora: turnDateBrasil(),
+      chamados: chamadosResumo,
+      ideias: ideiasResumo,
     };
 
-    const resposta = await conversarComCharlene(text, context, userId, chatId);
+    const resposta = await conversarComCharlene(text, context, userId);
 
     await databaseService.saveMessage(userId, resposta, 'charlene');
     await telegramService.sendMessage(chatId, resposta);
@@ -860,7 +869,9 @@ module.exports = async function handler(req, res) {
       chatId,
       'Chefe, tive um problema interno sério. Já registrei o erro para diagnóstico. Tente de novo em instantes.'
     );
-    await databaseService.logOoda('avaliar', 'Erro fatal no handler', userId, error.message || String(error));
+    await databaseService
+      .logOoda('avaliar', 'Erro fatal no handler', userId, error.message || String(error))
+      .catch(() => {});
     return res.status(200).json({ ok: true });
   }
 };
