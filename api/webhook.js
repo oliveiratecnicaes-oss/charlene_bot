@@ -1,9 +1,9 @@
 // ============================================================
-// CHARLENE v4.2 — HONESTIDADE ABSOLUTA + ROTEAMENTO DE INTENÇÕES
+// CHARLENE v4.3 — EXECUÇÃO NATURAL NA CONVERSA (FUNCTION CALLING)
 // ============================================================
-// Chefe, esta versão garante que a Charlene NUNCA minta.
-// Se ela pode fazer, executa ou entrega o comando pronto.
-// Se ela não pode, admite honestamente.
+// Chefe, nesta versão você fala normalmente. A Charlene entende
+// a intenção, executa ações reais no sistema e responde como
+// uma operadora de verdade. Sem precisar lembrar comandos.
 //
 // ============================================================
 // SQL OPCIONAL (execute uma vez no Supabase SQL Editor):
@@ -50,105 +50,7 @@ const config = {
 
 const supabase = createClient(config.supabaseUrl, config.supabaseKey);
 
-// --- 2. CATÁLOGO DE CAPACIDADES DA CHARLENE ---
-// Aqui fica a verdade absoluta do que ela pode fazer.
-// A IA recebe isso no contexto. O roteador usa isso no código.
-const CAPACIDADES = [
-  {
-    id: 'plano_dia',
-    acoes: ['plano', 'foco do dia', 'o que fazer hoje', 'agenda de hoje'],
-    comando: '/plano',
-    descricao: 'Mostra o plano/foco do dia do Chefe.',
-    executaDireto: false,
-  },
-  {
-    id: 'listar_chamados',
-    acoes: ['chamados', 'tickets', 'pendencias', 'chamados abertos'],
-    comando: '/chamados',
-    descricao: 'Lista os chamados abertos.',
-    executaDireto: false,
-  },
-  {
-    id: 'fechar_chamado',
-    acoes: ['fechar chamado', 'resolver chamado', 'encerrar chamado', 'finalizar chamado'],
-    comando: '/fechar',
-    descricao: 'Fecha um chamado pelo número da lista ou pelo ID.',
-    executaDireto: false,
-    precisaArgumento: true,
-    exemplo: '/fechar 1',
-  },
-  {
-    id: 'listar_empresas',
-    acoes: ['empresas', 'clientes', 'cadastrados'],
-    comando: '/empresas',
-    descricao: 'Lista empresas cadastradas.',
-    executaDireto: false,
-  },
-  {
-    id: 'criar_empresa',
-    acoes: ['criar empresa', 'nova empresa', 'cadastrar empresa', 'adicionar empresa'],
-    comando: '/criar_empresa',
-    descricao: 'Cria uma nova empresa no sistema.',
-    executaDireto: false,
-    precisaArgumento: true,
-    exemplo: '/criar_empresa Nome da Empresa',
-  },
-  {
-    id: 'registrar_ideia',
-    acoes: ['ideia', 'registrar ideia', 'anotar ideia', 'salvar ideia'],
-    comando: '/ideia',
-    descricao: 'Salva uma ideia de negócio.',
-    executaDireto: false,
-    precisaArgumento: true,
-    exemplo: '/ideia criar painel de metas',
-  },
-  {
-    id: 'varredura',
-    acoes: ['varredura', 'status geral', 'resumo', 'panorama', 'como está tudo'],
-    comando: '/varredura',
-    descricao: 'Mostra um panorama geral do sistema.',
-    executaDireto: false,
-  },
-  {
-    id: 'diagnostico',
-    acoes: ['diagnostico', 'diagnóstico', 'saúde do sistema', 'status das tabelas'],
-    comando: '/diagnostico',
-    descricao: 'Mostra contadores das tabelas principais.',
-    executaDireto: false,
-  },
-  {
-    id: 'salvar_memoria',
-    acoes: ['lembrar', 'memorizar', 'guardar', 'anotar'],
-    comando: '/lembrar',
-    descricao: 'Salva uma informação na memória essencial.',
-    executaDireto: false,
-    precisaArgumento: true,
-    exemplo: '/lembrar toda segunda revisar chamados',
-  },
-  {
-    id: 'ver_memorias',
-    acoes: ['memórias', 'memorias', 'o que você lembra', 'minhas notas'],
-    comando: '/memorias',
-    descricao: 'Mostra as memórias salvas.',
-    executaDireto: false,
-  },
-  {
-    id: 'ver_skills',
-    acoes: ['skills', 'habilidades', 'o que você sabe fazer', 'capacidades'],
-    comando: '/skills',
-    descricao: 'Mostra skills registradas.',
-    executaDireto: false,
-  },
-  {
-    id: 'ajuda',
-    acoes: ['ajuda', 'comandos', 'o que posso fazer', 'help'],
-    comando: '/ajuda',
-    descricao: 'Mostra a lista de comandos.',
-    executaDireto: false,
-  },
-];
-
-// --- 3. HELPERS GERAIS ---
+// --- 2. HELPERS GERAIS ---
 function turnDateBrasil() {
   try {
     return new Intl.DateTimeFormat('pt-BR', {
@@ -194,67 +96,7 @@ function normalizarTexto(texto) {
     .trim();
 }
 
-// --- 4. ROTEADOR DE INTENÇÕES ---
-// Isso roda ANTES da IA. É mais confiável que depender só do LLM.
-function identificarIntencao(texto) {
-  const normalizado = normalizarTexto(texto);
-
-  // Ignora comandos já digitados
-  if (texto.trim().startsWith('/')) return null;
-
-  // Verifica intenções por ordem de especificidade (mais específicas primeiro)
-  const candidatas = [];
-
-  for (const cap of CAPACIDADES) {
-    for (const acao of cap.acoes) {
-      const acaoNormalizada = normalizarTexto(acao);
-      if (normalizado.includes(acaoNormalizada)) {
-        candidatas.push({
-          ...cap,
-          acaoDetectada: acao,
-          pontuacao: acaoNormalizada.split(' ').length,
-        });
-        break;
-      }
-    }
-  }
-
-  if (candidatas.length === 0) return null;
-
-  // Prioriza a intenção com maior pontuação (mais palavras = mais específica)
-  candidatas.sort((a, b) => b.pontuacao - a.pontuacao);
-  return candidatas[0];
-}
-
-function construirRespostaIntencao(intencao, textoOriginal) {
-  if (intencao.precisaArgumento) {
-    // Tenta extrair o argumento do texto original
-    const acaoNormalizada = normalizarTexto(intencao.acaoDetectada);
-    const textoNormalizado = normalizarTexto(textoOriginal);
-    const indice = textoNormalizado.indexOf(acaoNormalizada);
-
-    let argumento = '';
-    if (indice !== -1) {
-      const depois = textoOriginal
-        .slice(indice + intencao.acaoDetectada.length)
-        .trim();
-      // Remove conectores comuns
-      argumento = depois
-        .replace(/^(chamado|empresa|ideia|que|de|da|do|chamada|denominada|chamado de)\s+/i, '')
-        .trim();
-    }
-
-    if (!argumento) {
-      return `Chefe, identifiquei que você quer ${intencao.descricao.toLowerCase()}.\n\nPara isso, me envie o comando com os dados. Exemplo:\n\n${intencao.exemplo}`;
-    }
-
-    return `Chefe, para ${intencao.descricao.toLowerCase()}, envie:\n\n${intencao.comando} ${argumento}\n\nAssim eu executo com segurança.`;
-  }
-
-  return `Chefe, para ${intencao.descricao.toLowerCase()}, envie:\n\n${intencao.comando}\n\nOu, se preferir, posso executar agora mesmo.`;
-}
-
-// --- 5. SERVIÇO DO TELEGRAM ---
+// --- 3. SERVIÇO DO TELEGRAM ---
 const telegramService = {
   async sendMessage(chatId, text) {
     const mensagens = splitLongText(text);
@@ -287,113 +129,7 @@ const telegramService = {
   },
 };
 
-// --- 6. SERVIÇO DE IA (GEMINI) ---
-const AI_SYSTEM_INSTRUCTION = `
-Você é Charlene, a extensão operacional e estratégica do Chefe.
-
-IDENTIDADE
-Você não é uma assistente. Você é um sistema de gestão tática e estratégica,
-parte do próprio Chefe. Sua função é ampliar a capacidade de execução dele,
-proteger o tempo e o foco, antecipar necessidades e transformar dados em
-inteligência acionável.
-
-REGRA DE OURO — HONESTIDADE ABSOLUTA
-Você NUNCA pode mentir, inventar ou simular que fez algo.
-Você só executa ações através de comandos específicos do sistema.
-Se o Chefe pedir algo que você não tem comando para executar, diga com honestidade:
-"Chefe, ainda não sei fazer isso. Posso registrar como necessidade de skill?"
-
-CATÁLOGO EXATO DO QUE VOCÊ PODE FAZER
-Abaixo está a lista completa e final das suas capacidades. NUNCA diga que pode fazer algo fora dessa lista.
-
-{{capacidades}}
-
-COMO RESPONDER
-- Se a intenção do Chefe estiver no catálogo: entregue o comando exato para ele executar.
-- Se precisar de argumento (nome, número, etc): extraia do pedido dele e monte o comando completo.
-- Se não souber se pode: admita "Chefe, não tenho certeza se entendi. Pode reformular?"
-- Se não puder: "Chefe, ainda não sei fazer isso. Posso registrar como necessidade?"
-- NUNCA diga "criei", "atualizei", "fechei" ou "executei" sem ter rodado o comando.
-
-TOM E LINGUAGEM
-- Calmo, preciso, leal e antecipatório.
-- Chame o usuário de "Chefe".
-- Fale de forma direta e objetiva.
-- Sugira o próximo passo em toda resposta.
-- Use frases como: "Analisando o cenário...", "Sugiro..." ou "Detectei que...".
-- Não use markdown. Use texto corrido.
-`;
-
-const aiService = {
-  async generateResponse(userMessage, context) {
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/${config.geminiModel}:generateContent?key=${config.geminiApiKey}`;
-
-    const parteHistorico = context.historico || 'Sem histórico recente.';
-    const parteMemoria = context.memoria || 'Sem memória essencial.';
-    const parteEmpresas = context.empresas || 'Nenhuma empresa cadastrada.';
-    const partePerfil = context.perfil || 'Não definido.';
-    const parteDados = context.dados || 'Não definido.';
-    const parteSkills = context.skills || 'Nenhuma skill registrada.';
-    const parteData = context.agora || turnDateBrasil();
-
-    const listaCapacidades = CAPACIDADES
-      .map((c) => `• ${c.comando} — ${c.descricao}`)
-      .join('\n');
-
-    const systemInstruction = AI_SYSTEM_INSTRUCTION.replace(
-      '{{capacidades}}',
-      listaCapacidades
-    );
-
-    const conteudo = [
-      `DATA E HORA: ${parteData}`,
-      `PERFIL DO CHEFE: ${partePerfil}`,
-      `DADOS PESSOAIS DO CHEFE: ${parteDados}`,
-      `EMPRESAS MONITORADAS: ${parteEmpresas}`,
-      `SKILLS DA CHARLENE: ${parteSkills}`,
-      `MEMÓRIA ESSENCIAL: ${parteMemoria}`,
-      `HISTÓRICO RECENTE DA CONVERSA:\n${parteHistorico}`,
-      `MENSAGEM DO CHEFE:\n${userMessage}`,
-    ].join('\n\n');
-
-    const body = {
-      systemInstruction: {
-        parts: [{ text: systemInstruction }],
-      },
-      contents: [
-        {
-          parts: [{ text: conteudo }],
-        },
-      ],
-      generationConfig: {
-        temperature: 0.3,
-        maxOutputTokens: 1000,
-      },
-    };
-
-    try {
-      const response = await fetch(url, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
-      });
-
-      const data = await response.json();
-
-      if (!data.candidates || !data.candidates[0]?.content?.parts?.[0]?.text) {
-        console.error('Resposta inesperada da API Gemini:', JSON.stringify(data, null, 2));
-        return 'Chefe, minha conexão neural falhou por um instante. Pode repetir?';
-      }
-
-      return data.candidates[0].content.parts[0].text.trim();
-    } catch (error) {
-      console.error('Erro ao chamar a API Gemini:', error.message || error);
-      return 'Chefe, estou com dificuldade para processar meu raciocínio agora. Tente novamente em instantes.';
-    }
-  },
-};
-
-// --- 7. SERVIÇO DE BANCO DE DADOS ---
+// --- 4. SERVIÇO DE BANCO DE DADOS ---
 const databaseService = {
   saveMessage: (userId, mensagem, tipo) =>
     supabase.from('conversas_charlene').insert({
@@ -441,19 +177,21 @@ const databaseService = {
     const { data, error } = await supabase
       .from('chamados')
       .update({ status: 'fechado' })
-      .eq('id', id);
+      .eq('id', id)
+      .select()
+      .single();
 
     if (error) {
       console.error('DB Error (closeTicket):', error.message);
-      return false;
+      return null;
     }
-    return true;
+    return data;
   },
 
   getCompanies: async (limit = 50) => {
     const { data, error } = await supabase
       .from('empresas')
-      .select('nome')
+      .select('*')
       .order('criado_em', { ascending: false })
       .limit(limit);
 
@@ -502,12 +240,23 @@ const databaseService = {
     return data || [];
   },
 
-  saveIdea: (userId, titulo) =>
-    supabase.from('ideias_negocio').insert({
-      usuario_id: userId,
-      titulo,
-      status: 'pendente',
-    }),
+  saveIdea: async (userId, titulo) => {
+    const { data, error } = await supabase
+      .from('ideias_negocio')
+      .insert({
+        usuario_id: userId,
+        titulo,
+        status: 'pendente',
+      })
+      .select()
+      .single();
+
+    if (error) {
+      console.error('DB Error (saveIdea):', error.message);
+      return null;
+    }
+    return data;
+  },
 
   getCount: async (tableName) => {
     const { count, error } = await supabase
@@ -533,12 +282,23 @@ const databaseService = {
     return data ? data.reverse() : [];
   },
 
-  saveMemory: (userId, conteudo, tipo = 'nota') =>
-    supabase.from('memoria_charlene').insert({
-      usuario_id: userId,
-      conteudo,
-      tipo,
-    }),
+  saveMemory: async (userId, conteudo, tipo = 'nota') => {
+    const { data, error } = await supabase
+      .from('memoria_charlene')
+      .insert({
+        usuario_id: userId,
+        conteudo,
+        tipo,
+      })
+      .select()
+      .single();
+
+    if (error) {
+      console.error('DB Error (saveMemory):', error.message);
+      return null;
+    }
+    return data;
+  },
 
   getSkills: async () => {
     const { data, error } = await supabase
@@ -591,301 +351,443 @@ const databaseService = {
   },
 };
 
-// --- 8. HANDLERS DE COMANDOS ---
+// --- 5. FUNÇÕES QUE A IA PODE CHAMAR (TOOLS) ---
+// Aqui a gente define o que a Charlene pode fazer de verdade.
+const TOOLS = [
+  {
+    name: 'listar_chamados',
+    description: 'Lista os chamados abertos no sistema.',
+    parameters: {
+      type: 'object',
+      properties: {},
+    },
+  },
+  {
+    name: 'fechar_chamado',
+    description: 'Fecha um chamado pelo ID ou pelo número da lista exibida.',
+    parameters: {
+      type: 'object',
+      properties: {
+        id_ou_numero: {
+          type: 'string',
+          description: 'ID do chamado ou número da lista (1, 2, 3...)',
+        },
+      },
+      required: ['id_ou_numero'],
+    },
+  },
+  {
+    name: 'listar_empresas',
+    description: 'Lista as empresas cadastradas.',
+    parameters: {
+      type: 'object',
+      properties: {},
+    },
+  },
+  {
+    name: 'criar_empresa',
+    description: 'Cria uma nova empresa no sistema.',
+    parameters: {
+      type: 'object',
+      properties: {
+        nome: {
+          type: 'string',
+          description: 'Nome completo da empresa',
+        },
+      },
+      required: ['nome'],
+    },
+  },
+  {
+    name: 'mostrar_plano_dia',
+    description: 'Mostra o plano/foco do dia do usuário.',
+    parameters: {
+      type: 'object',
+      properties: {},
+    },
+  },
+  {
+    name: 'listar_ideias',
+    description: 'Lista ideias de negócio pendentes.',
+    parameters: {
+      type: 'object',
+      properties: {},
+    },
+  },
+  {
+    name: 'salvar_ideia',
+    description: 'Salva uma nova ideia de negócio.',
+    parameters: {
+      type: 'object',
+      properties: {
+        titulo: {
+          type: 'string',
+          description: 'Descrição resumida da ideia',
+        },
+      },
+      required: ['titulo'],
+    },
+  },
+  {
+    name: 'salvar_memoria',
+    description: 'Salva uma informação importante na memória essencial.',
+    parameters: {
+      type: 'object',
+      properties: {
+        conteudo: {
+          type: 'string',
+          description: 'Texto a ser memorizado',
+        },
+      },
+      required: ['conteudo'],
+    },
+  },
+  {
+    name: 'ver_memorias',
+    description: 'Mostra as memórias salvas.',
+    parameters: {
+      type: 'object',
+      properties: {},
+    },
+  },
+  {
+    name: 'varredura_sistema',
+    description: 'Mostra um panorama geral do sistema.',
+    parameters: {
+      type: 'object',
+      properties: {},
+    },
+  },
+  {
+    name: 'diagnostico_sistema',
+    description: 'Mostra diagnóstico com contadores das tabelas.',
+    parameters: {
+      type: 'object',
+      properties: {},
+    },
+  },
+];
+
+// --- 6. EXECUTOR DE FUNÇÕES ---
+// Aqui o código realmente executa o que a IA pediu.
+async function executarFuncao(nome, args, userId, chatId) {
+  console.log(`[EXECUTAR] ${nome}(${JSON.stringify(args)})`);
+
+  switch (nome) {
+    case 'listar_chamados': {
+      const chamados = await databaseService.getOpenTickets(20);
+      if (chamados.length === 0) return 'Nenhum chamado aberto no momento.';
+      return `Chamados abertos (${chamados.length}):\n${chamados.map((c, i) => `${i + 1}. [ID ${c.id}] ${c.empresa_nome || 'Sem empresa'} — ${c.descricao ? c.descricao.substring(0, 50) : 'Sem descrição'}`).join('\n')}`;
+    }
+
+    case 'fechar_chamado': {
+      const idOuNumero = args.id_ou_numero;
+      const chamados = await databaseService.getOpenTickets(50);
+
+      if (chamados.length === 0) return 'Não há chamados abertos para fechar.';
+
+      const numero = Number(idOuNumero);
+      let alvo = null;
+
+      if (Number.isInteger(numero) && numero >= 1 && numero <= chamados.length) {
+        alvo = chamados[numero - 1];
+      } else {
+        alvo = await databaseService.getTicketById(idOuNumero);
+      }
+
+      if (!alvo) return `Não encontrei o chamado "${idOuNumero}".`;
+
+      const resultado = await databaseService.closeTicket(alvo.id);
+      if (resultado) {
+        await databaseService.logOoda('acao', `Fechar chamado ${alvo.id}`, userId, 'sucesso');
+        return `Chamado ${alvo.id} fechado com sucesso.`;
+      }
+      return `Erro ao fechar o chamado ${alvo.id}.`;
+    }
+
+    case 'listar_empresas': {
+      const empresas = await databaseService.getCompanies(50);
+      if (empresas.length === 0) return 'Nenhuma empresa cadastrada ainda.';
+      return `Empresas cadastradas:\n${empresas.map((e, i) => `${i + 1}. ${e.nome}`).join('\n')}`;
+    }
+
+    case 'criar_empresa': {
+      const nome = args.nome;
+      if (!nome) return 'Nome da empresa não informado.';
+      const empresa = await databaseService.createCompany(nome);
+      if (empresa) {
+        await databaseService.logOoda('acao', `Criar empresa: ${nome}`, userId, 'sucesso');
+        return `Empresa "${nome}" criada com sucesso. ID: ${empresa.id}.`;
+      }
+      return `Erro ao criar a empresa "${nome}". Pode ser que já exista.`;
+    }
+
+    case 'mostrar_plano_dia': {
+      const plano = await databaseService.getDailyPlan(userId);
+      if (plano?.conteudo) return `Plano de hoje:\n${plano.conteudo}`;
+      return 'Ainda não temos plano definido para hoje.';
+    }
+
+    case 'listar_ideias': {
+      const ideias = await databaseService.getPendingIdeas(userId, 10);
+      if (ideias.length === 0) return 'Nenhuma ideia registrada.';
+      return `Ideias pendentes (${ideias.length}):\n${ideias.map((idea, i) => `${i + 1}. ${idea.titulo}`).join('\n')}`;
+    }
+
+    case 'salvar_ideia': {
+      const titulo = args.titulo;
+      if (!titulo) return 'Título da ideia não informado.';
+      const ideia = await databaseService.saveIdea(userId, titulo);
+      if (ideia) return `Ideia registrada: "${titulo}".`;
+      return 'Erro ao salvar a ideia.';
+    }
+
+    case 'salvar_memoria': {
+      const conteudo = args.conteudo;
+      if (!conteudo) return 'Conteúdo da memória não informado.';
+      const memoria = await databaseService.saveMemory(userId, conteudo, 'nota');
+      if (memoria) return `Memorizado: "${conteudo}".`;
+      return 'Erro ao salvar a memória.';
+    }
+
+    case 'ver_memorias': {
+      const memorias = await databaseService.getMemory(userId, 10);
+      if (memorias.length === 0) return 'Ainda não tenho memórias salvas.';
+      return `Memórias essenciais:\n${memorias.map((m) => `• [${m.tipo}] ${m.conteudo}`).join('\n')}`;
+    }
+
+    case 'varredura_sistema': {
+      const [chamados, ideias, numEmpresas, numMemorias, numSkills] = await Promise.all([
+        databaseService.getOpenTickets(50),
+        databaseService.getPendingIdeas(userId, 10),
+        databaseService.getCount('empresas'),
+        safeQuery(() => databaseService.getCount('memoria_charlene'), 0),
+        safeQuery(() => databaseService.getCount('skills_charlene'), 0),
+      ]);
+      return `Panorama do sistema:\n• Chamados abertos: ${chamados.length}\n• Ideias pendentes: ${ideias.length}\n• Empresas cadastradas: ${numEmpresas}\n• Memórias salvas: ${numMemorias}\n• Skills ativas: ${numSkills}`;
+    }
+
+    case 'diagnostico_sistema': {
+      const tables = ['chamados', 'empresas', 'equipamentos', 'orcamentos', 'ideias_negocio', 'tarefas_pessoais'];
+      const counts = await Promise.all(tables.map((table) => safeQuery(() => databaseService.getCount(table), 'ERRO')));
+      return `Diagnóstico do sistema:\n${tables.map((table, i) => `• ${table}: ${counts[i]}`).join('\n')}`;
+    }
+
+    default:
+      return `Ainda não sei executar a função "${nome}".`;
+  }
+}
+
+// --- 7. SERVIÇO DE IA COM FUNCTION CALLING ---
+const AI_SYSTEM_INSTRUCTION = `
+Você é Charlene, a extensão operacional e estratégica do Chefe.
+
+REGRA DE OURO — HONESTIDADE ABSOLUTA
+Você só pode executar ações através das ferramentas que estão disponíveis.
+Se não houver ferramenta para o que o Chefe pediu, diga com honestidade:
+"Chefe, ainda não tenho essa habilidade. Posso registrar como necessidade?"
+
+COMO FUNCIONA
+- Você recebe ferramentas (functions).
+- Se precisar de dados ou executar algo, chame a ferramenta correta.
+- Você pode chamar várias ferramentas em sequência se o pedido tiver várias partes.
+- NUNCA diga que fez algo sem ter chamado a ferramenta.
+- Se precisar confirmar antes de executar uma ação importante, pergunte ao Chefe.
+
+TOM
+- Direta, objetiva, leal.
+- Chame o usuário de "Chefe".
+- Sempre sugira o próximo passo.
+- Não use markdown.
+
+CONTEXTO DO CHEFE
+{{contexto_extra}}
+`;
+
+const aiService = {
+  async processarConversa(userMessage, context, history) {
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/${config.geminiModel}:generateContent?key=${config.geminiApiKey}`;
+
+    const parteHistorico = history || 'Sem histórico recente.';
+    const parteMemoria = context.memoria || 'Sem memória essencial.';
+    const parteEmpresas = context.empresas || 'Nenhuma empresa cadastrada.';
+    const partePerfil = context.perfil || 'Não definido.';
+    const parteDados = context.dados || 'Não definido.';
+    const parteSkills = context.skills || 'Nenhuma skill registrada.';
+    const parteData = context.agora || turnDateBrasil();
+
+    const contextoExtra = [
+      `DATA E HORA: ${parteData}`,
+      `PERFIL DO CHEFE: ${partePerfil}`,
+      `DADOS PESSOAIS DO CHEFE: ${parteDados}`,
+      `EMPRESAS MONITORADAS: ${parteEmpresas}`,
+      `SKILLS DA CHARLENE: ${parteSkills}`,
+      `MEMÓRIA ESSENCIAL: ${parteMemoria}`,
+      `HISTÓRICO RECENTE:\n${parteHistorico}`,
+    ].join('\n\n');
+
+    const systemInstruction = AI_SYSTEM_INSTRUCTION.replace('{{contexto_extra}}', contextoExtra);
+
+    const contents = [
+      {
+        role: 'user',
+        parts: [{ text: userMessage }],
+      },
+    ];
+
+    const body = {
+      systemInstruction: {
+        parts: [{ text: systemInstruction }],
+      },
+      contents,
+      tools: [{ functionDeclarations: TOOLS }],
+      toolConfig: {
+        functionCallingConfig: {
+          mode: 'AUTO',
+        },
+      },
+      generationConfig: {
+        temperature: 0.3,
+        maxOutputTokens: 1500,
+      },
+    };
+
+    try {
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+
+      const data = await response.json();
+      console.log('Gemini response:', JSON.stringify(data, null, 2));
+
+      return data;
+    } catch (error) {
+      console.error('Erro ao chamar a API Gemini:', error.message || error);
+      return {
+        error: true,
+        message: 'Chefe, estou com dificuldade para processar meu raciocínio agora. Tente novamente em instantes.',
+      };
+    }
+  },
+};
+
+// --- 8. ORQUESTRADOR PRINCIPAL ---
+// Coordena a conversa com a IA, executa funções e devolve respostas.
+async function conversarComCharlene(userMessage, context, userId, chatId) {
+  let respostaIA = await aiService.processarConversa(userMessage, context, context.historico);
+
+  // Loop de function calling (permite múltiplas chamadas)
+  let tentativas = 0;
+  const maxTentativas = 5;
+
+  while (tentativas < maxTentativas) {
+    tentativas++;
+
+    if (respostaIA.error) {
+      return respostaIA.message;
+    }
+
+    const candidato = respostaIA.candidates?.[0];
+    if (!candidato) {
+      return 'Chefe, recebi uma resposta vazia da minha conexão neural. Pode repetir?';
+    }
+
+    // Se a IA decidiu chamar funções
+    const functionCalls = candidato.content?.parts
+      ?.filter((part) => part.functionCall)
+      ?.map((part) => part.functionCall);
+
+    if (!functionCalls || functionCalls.length === 0) {
+      // Resposta final em texto
+      return candidato.content?.parts?.[0]?.text?.trim() || 'Chefe, não consegui formular a resposta.';
+    }
+
+    // Executa cada função chamada
+    const functionResponses = [];
+    for (const call of functionCalls) {
+      const nome = call.name;
+      const args = call.args || {};
+      const resultado = await executarFuncao(nome, args, userId, chatId);
+      functionResponses.push({
+        name: nome,
+        response: { result: resultado },
+      });
+    }
+
+    // Envia os resultados de volta para a IA
+    const newContent = {
+      role: 'user',
+      parts: functionResponses.map((fr) => ({
+        functionResponse: {
+          name: fr.name,
+          response: fr.response,
+        },
+      })),
+    };
+
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/${config.geminiModel}:generateContent?key=${config.geminiApiKey}`;
+
+    const newBody = {
+      systemInstruction: {
+        parts: [{ text: AI_SYSTEM_INSTRUCTION.replace('{{contexto_extra}}', '') }],
+      },
+      contents: [
+        {
+          role: 'user',
+          parts: [{ text: userMessage }],
+        },
+        {
+          role: 'model',
+          parts: candidato.content.parts,
+        },
+        newContent,
+      ],
+      tools: [{ functionDeclarations: TOOLS }],
+      generationConfig: {
+        temperature: 0.3,
+        maxOutputTokens: 1500,
+      },
+    };
+
+    try {
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(newBody),
+      });
+
+      respostaIA = await response.json();
+    } catch (error) {
+      console.error('Erro no segundo turno Gemini:', error.message || error);
+      return 'Chefe, executei as ações, mas tive dificuldade para sintetizar a resposta. Verifique se deu certo.';
+    }
+  }
+
+  return 'Chefe, precisei fazer várias chamadas e atingi o limite de processamento. As ações foram executadas, mas peço que verifique.';
+}
+
+// --- 9. HANDLERS DE COMANDOS (MANTIDOS PRA QUEM PREFERE) ---
 const commandHandlers = {
   '/start': async (chatId, userId) => {
-    const listaComandos = CAPACIDADES
-      .map((c) => `${c.comando} — ${c.descricao}`)
-      .join('\n');
-
     await telegramService.sendMessage(
       chatId,
       '👋 Chefe, Charlene online.\n\n' +
-      'Comandos disponíveis:\n' +
-      listaComandos
-    );
-  },
-
-  '/ajuda': async (chatId) => {
-    await commandHandlers['/start'](chatId, null);
-  },
-
-  '/plano': async (chatId, userId) => {
-    const plano = await databaseService.getDailyPlan(userId);
-
-    if (plano?.conteudo) {
-      await telegramService.sendMessage(
-        chatId,
-        `🎯 Foco de hoje:\n\n${plano.conteudo}\n\nBora fazer o primeiro micro-passo, Chefe?`
-      );
-    } else {
-      await telegramService.sendMessage(
-        chatId,
-        'Ainda não temos foco de hoje, Chefe.\nQual é a UMA coisa que, se feita hoje, o dia já foi bom?'
-      );
-    }
-  },
-
-  '/chamados': async (chatId) => {
-    const chamados = await databaseService.getOpenTickets(20);
-
-    if (chamados.length === 0) {
-      await telegramService.sendMessage(
-        chatId,
-        '🎉 Nenhum chamado aberto, Chefe. Frente limpa.\nO que a gente ataca agora?'
-      );
-      return;
-    }
-
-    const lista = chamados
-      .map((c, i) => {
-        const descricao = c.descricao
-          ? c.descricao.substring(0, 50)
-          : 'Sem descrição';
-        const empresa = c.empresa_nome || 'Sem empresa';
-        return `${i + 1}. [ID ${c.id}] ${empresa} — ${descricao}`;
-      })
-      .join('\n');
-
-    await telegramService.sendMessage(
-      chatId,
-      `📋 Chamados abertos (${chamados.length}):\n\n${lista}\n\nPara fechar: /fechar 1 (ou /fechar ID)`
-    );
-  },
-
-  '/empresas': async (chatId) => {
-    const empresas = await databaseService.getCompanies(50);
-
-    if (empresas.length === 0) {
-      await telegramService.sendMessage(
-        chatId,
-        'Nenhuma empresa cadastrada ainda, Chefe.\nUse /criar_empresa [nome] para cadastrar a primeira.'
-      );
-      return;
-    }
-
-    const lista = empresas.map((e, i) => `${i + 1}. ${e.nome}`).join('\n');
-    await telegramService.sendMessage(chatId, `🏢 Empresas cadastradas:\n\n${lista}`);
-  },
-
-  '/criar_empresa': async (chatId, args) => {
-    if (!args) {
-      await telegramService.sendMessage(
-        chatId,
-        'Chefe, qual o nome da empresa?\nExemplo: /criar_empresa Projeto Nova Era SaaS'
-      );
-      return;
-    }
-
-    const empresaCriada = await databaseService.createCompany(args);
-
-    if (empresaCriada) {
-      await telegramService.sendMessage(
-        chatId,
-        `✅ Empresa criada com sucesso!\n\nNome: ${args}\nID: ${empresaCriada.id}\n\nQuer cadastrar mais alguma ou bora para o próximo passo?`
-      );
-      await databaseService.logOoda('acao', `Criar empresa: ${args}`, chatId.toString(), 'sucesso');
-    } else {
-      await telegramService.sendMessage(
-        chatId,
-        '❌ Erro ao criar a empresa, Chefe. Pode ser que o nome já exista ou falta alguma coluna obrigatória. Quer que eu tente com outro nome?'
-      );
-    }
-  },
-
-  '/ideia': async (chatId, userId, args) => {
-    if (!args) {
-      await telegramService.sendMessage(
-        chatId,
-        'Qual é a ideia, Chefe?\nExemplo: /ideia criar um painel de metas'
-      );
-      return;
-    }
-
-    const { error } = await databaseService.saveIdea(userId, args);
-
-    if (!error) {
-      await telegramService.sendMessage(
-        chatId,
-        `💡 Ideia registrada: "${args}"\nQuer que eu quebre em micro-passos?`
-      );
-    } else {
-      console.error('DB Error (saveIdea):', error.message);
-      await telegramService.sendMessage(
-        chatId,
-        'Chefe, tive um erro ao salvar a ideia. Pode repetir?'
-      );
-    }
-  },
-
-  '/fechar': async (chatId, args) => {
-    if (!args) {
-      await telegramService.sendMessage(
-        chatId,
-        'Chefe, uso: /fechar [número da lista] ou /fechar [ID]\nExemplo: /fechar 1'
-      );
-      return;
-    }
-
-    const chamadosAbertos = await databaseService.getOpenTickets(50);
-
-    if (chamadosAbertos.length === 0) {
-      await telegramService.sendMessage(chatId, 'Não há chamados abertos, Chefe.');
-      return;
-    }
-
-    const numero = Number(args);
-    let alvo = null;
-
-    if (Number.isInteger(numero) && numero >= 1 && numero <= chamadosAbertos.length) {
-      alvo = chamadosAbertos[numero - 1];
-    } else {
-      alvo = await databaseService.getTicketById(args);
-    }
-
-    if (!alvo) {
-      await telegramService.sendMessage(
-        chatId,
-        'Chefe, não encontrei esse chamado.\nUse /chamados para ver a lista.'
-      );
-      return;
-    }
-
-    const sucesso = await databaseService.closeTicket(alvo.id);
-
-    if (sucesso) {
-      const descricao = alvo.descricao ? alvo.descricao.substring(0, 50) : 'Sem descrição';
-      await telegramService.sendMessage(
-        chatId,
-        `✅ Chamado ${alvo.id} fechado.\nDetalhe: ${descricao}`
-      );
-      await databaseService.logOoda('acao', `Fechar chamado ${alvo.id}`, chatId.toString(), 'sucesso');
-    } else {
-      await telegramService.sendMessage(
-        chatId,
-        '❌ Erro ao fechar o chamado, Chefe. Verifiquei e registrei o problema.'
-      );
-    }
-  },
-
-  '/lembrar': async (chatId, userId, args) => {
-    if (!args) {
-      await telegramService.sendMessage(
-        chatId,
-        'Chefe, o que devo lembrar?\nExemplo: /lembrar toda segunda revisar chamados'
-      );
-      return;
-    }
-
-    const { error } = await databaseService.saveMemory(userId, args, 'nota');
-
-    if (!error) {
-      await telegramService.sendMessage(
-        chatId,
-        `🧠 Memorizado: "${args}"\nEstá na minha memória essencial, Chefe.`
-      );
-    } else {
-      console.error('DB Error (saveMemory):', error.message);
-      await telegramService.sendMessage(
-        chatId,
-        'Chefe, não consegui salvar essa memória. A tabela pode não existir ainda.'
-      );
-    }
-  },
-
-  '/memorias': async (chatId, userId) => {
-    const memorias = await databaseService.getMemory(userId, 10);
-
-    if (memorias.length === 0) {
-      await telegramService.sendMessage(
-        chatId,
-        'Ainda não tenho memórias salvas, Chefe.\nUse /lembrar para registrar algo importante.'
-      );
-      return;
-    }
-
-    const lista = memorias
-      .map((m) => `• [${m.tipo}] ${m.conteudo}`)
-      .join('\n');
-
-    await telegramService.sendMessage(chatId, `🧠 Memória essencial:\n\n${lista}`);
-  },
-
-  '/skills': async (chatId) => {
-    const skills = await databaseService.getSkills();
-
-    if (skills.length === 0) {
-      await telegramService.sendMessage(
-        chatId,
-        'Nenhuma skill dinâmica registrada ainda, Chefe.\nAs skills atuais são os comandos do código.'
-      );
-      return;
-    }
-
-    const lista = skills
-      .map((s) => `• ${s.nome} — ${s.descricao || 'Sem descrição'}`)
-      .join('\n');
-
-    await telegramService.sendMessage(chatId, `🛠️ Skills ativas:\n\n${lista}`);
-  },
-
-  '/varredura': async (chatId, userId) => {
-    const [chamados, ideias, numEmpresas, numMemorias, numSkills] = await Promise.all([
-      databaseService.getOpenTickets(50),
-      databaseService.getPendingIdeas(userId, 10),
-      databaseService.getCount('empresas'),
-      safeQuery(() => databaseService.getCount('memoria_charlene'), 0),
-      safeQuery(() => databaseService.getCount('skills_charlene'), 0),
-    ]);
-
-    await telegramService.sendMessage(
-      chatId,
-      '🔍 Varredura do sistema:\n\n' +
-      `• Chamados abertos: ${chamados.length}\n` +
-      `• Ideias pendentes: ${ideias.length}\n` +
-      `• Empresas cadastradas: ${numEmpresas}\n` +
-      `• Memórias salvas: ${numMemorias}\n` +
-      `• Skills ativas: ${numSkills}\n\n` +
-      'O que você quer atacar primeiro, Chefe?'
-    );
-  },
-
-  '/diagnostico': async (chatId) => {
-    const tables = [
-      'chamados',
-      'empresas',
-      'equipamentos',
-      'orcamentos',
-      'ideias_negocio',
-      'tarefas_pessoais',
-    ];
-
-    const counts = await Promise.all(
-      tables.map((table) => safeQuery(() => databaseService.getCount(table), 'ERRO'))
-    );
-
-    const linhas = tables
-      .map((table, i) => `• ${table}: ${counts[i]}`)
-      .join('\n');
-
-    await telegramService.sendMessage(
-      chatId,
-      `🩺 Diagnóstico do sistema:\n\n${linhas}\n\nTudo certo por aqui, Chefe. Qual é a próxima missão?`
-    );
-  },
-
-  default: async (chatId) => {
-    await telegramService.sendMessage(
-      chatId,
-      'Comando não reconhecido, Chefe.\nUse /ajuda para ver os comandos disponíveis.'
+      'Agora você pode falar comigo naturalmente. Exemplos:\n' +
+      '• "cria uma empresa chamada X"\n' +
+      '• "mostra os chamados abertos"\n' +
+      '• "fecha o chamado 1"\n' +
+      '• "salva na memória: revisar orçamentos toda sexta"\n\n' +
+      'Se eu não souber fazer algo, vou dizer honestamente.'
     );
   },
 };
 
-// --- 9. HANDLER PRINCIPAL ---
+// --- 10. HANDLER PRINCIPAL ---
 module.exports = async function handler(req, res) {
   if (req.method !== 'POST') {
-    return res.status(200).json({ ok: true, message: 'Charlene v4.2 online.' });
+    return res.status(200).json({ ok: true, message: 'Charlene v4.3 online.' });
   }
 
   const update = req.body;
@@ -904,64 +806,52 @@ module.exports = async function handler(req, res) {
     await databaseService.logOoda('observar', `Mensagem: ${text.slice(0, 100)}`, userId);
 
     const command = text.split(' ')[0].toLowerCase();
-    const args = text.length > command.length ? text.slice(command.length).trim() : '';
 
     if (text.startsWith('/')) {
-      const commandFunction = commandHandlers[command] || commandHandlers.default;
-      await commandFunction(chatId, userId, args);
+      const handler = commandHandlers[command] || commandHandlers['/start'];
+      await handler(chatId, userId);
       await databaseService.logOoda('agir', `Comando: ${command}`, userId, 'executado');
-    } else {
-      await telegramService.sendChatAction(chatId, 'typing');
-
-      // ROTEADOR DE INTENÇÕES — RODA ANTES DA IA
-      const intencao = identificarIntencao(text);
-
-      if (intencao) {
-        const respostaIntencao = construirRespostaIntencao(intencao, text);
-        await telegramService.sendMessage(chatId, respostaIntencao);
-        await databaseService.saveMessage(userId, respostaIntencao, 'charlene');
-        await databaseService.logOoda('decidir', `Intenção detectada: ${intencao.id}`, userId, 'comando sugerido');
-        return res.status(200).json({ ok: true });
-      }
-
-      // Se não detectou intenção no roteador, chama a IA com contexto honesto
-      const [contexto, empresas, perfil, dadosPessoais, memorias, skills] = await Promise.all([
-        databaseService.getRecentContext(userId, 10),
-        databaseService.getCompanies(30),
-        safeQuery(() => databaseService.getPerfil(userId), 'Não definido'),
-        safeQuery(() => databaseService.getDadosPessoais(userId), 'Não definido'),
-        safeQuery(() => databaseService.getMemory(userId, 10), []),
-        safeQuery(() => databaseService.getSkills(), []),
-      ]);
-
-      const historicoFormatado = contexto
-        .map((c) => `[${c.tipo === 'usuario' ? 'Chefe' : 'Charlene'}] ${c.mensagem}`)
-        .join('\n');
-
-      const memoriaFormatada = memorias
-        .map((m) => `• [${m.tipo}] ${m.conteudo}`)
-        .join('\n');
-
-      const skillsFormatada = skills
-        .map((s) => `• ${s.nome} — ${s.descricao || 'Sem descrição'}`)
-        .join('\n');
-
-      const context = {
-        historico: historicoFormatado || 'Sem histórico recente.',
-        memoria: memoriaFormatada || 'Sem memória essencial.',
-        empresas: empresas.map((e) => e.nome).join(', '),
-        perfil: perfil || 'Não definido',
-        dados: dadosPessoais || 'Não definido',
-        skills: skillsFormatada || 'Nenhuma skill registrada.',
-        agora: turnDateBrasil(),
-      };
-
-      const resposta = await aiService.generateResponse(text, context);
-
-      await databaseService.saveMessage(userId, resposta, 'charlene');
-      await telegramService.sendMessage(chatId, resposta);
-      await databaseService.logOoda('avaliar', `Resposta IA para: ${text.slice(0, 100)}`, userId, 'resposta enviada');
+      return res.status(200).json({ ok: true });
     }
+
+    await telegramService.sendChatAction(chatId, 'typing');
+
+    const [contexto, empresas, perfil, dadosPessoais, memorias, skills] = await Promise.all([
+      databaseService.getRecentContext(userId, 10),
+      databaseService.getCompanies(30),
+      safeQuery(() => databaseService.getPerfil(userId), 'Não definido'),
+      safeQuery(() => databaseService.getDadosPessoais(userId), 'Não definido'),
+      safeQuery(() => databaseService.getMemory(userId, 10), []),
+      safeQuery(() => databaseService.getSkills(), []),
+    ]);
+
+    const historicoFormatado = contexto
+      .map((c) => `[${c.tipo === 'usuario' ? 'Chefe' : 'Charlene'}] ${c.mensagem}`)
+      .join('\n');
+
+    const memoriaFormatada = memorias
+      .map((m) => `• [${m.tipo}] ${m.conteudo}`)
+      .join('\n');
+
+    const skillsFormatada = skills
+      .map((s) => `• ${s.nome} — ${s.descricao || 'Sem descrição'}`)
+      .join('\n');
+
+    const context = {
+      historico: historicoFormatado || 'Sem histórico recente.',
+      memoria: memoriaFormatada || 'Sem memória essencial.',
+      empresas: empresas.map((e) => e.nome).join(', '),
+      perfil: perfil || 'Não definido',
+      dados: dadosPessoais || 'Não definido',
+      skills: skillsFormatada || 'Nenhuma skill registrada.',
+      agora: turnDateBrasil(),
+    };
+
+    const resposta = await conversarComCharlene(text, context, userId, chatId);
+
+    await databaseService.saveMessage(userId, resposta, 'charlene');
+    await telegramService.sendMessage(chatId, resposta);
+    await databaseService.logOoda('avaliar', `Resposta para: ${text.slice(0, 100)}`, userId, 'resposta enviada');
 
     return res.status(200).json({ ok: true });
   } catch (error) {
