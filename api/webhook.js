@@ -1,9 +1,9 @@
 // ============================================================
-// CHARLENE v4.1 — CORREÇÃO CRÍTICA: SEM ALUCINAÇÃO DE AÇÕES
+// CHARLENE v4.2 — HONESTIDADE ABSOLUTA + ROTEAMENTO DE INTENÇÕES
 // ============================================================
-// Chefe, esta versão corrige o erro de alucinação:
-// A Charlene NUNCA mais vai dizer que fez algo que não fez.
-// Adicionado: /criar_empresa [nome] — cria empresa REAL no banco.
+// Chefe, esta versão garante que a Charlene NUNCA minta.
+// Se ela pode fazer, executa ou entrega o comando pronto.
+// Se ela não pode, admite honestamente.
 //
 // ============================================================
 // SQL OPCIONAL (execute uma vez no Supabase SQL Editor):
@@ -50,7 +50,105 @@ const config = {
 
 const supabase = createClient(config.supabaseUrl, config.supabaseKey);
 
-// --- 2. HELPERS GERAIS ---
+// --- 2. CATÁLOGO DE CAPACIDADES DA CHARLENE ---
+// Aqui fica a verdade absoluta do que ela pode fazer.
+// A IA recebe isso no contexto. O roteador usa isso no código.
+const CAPACIDADES = [
+  {
+    id: 'plano_dia',
+    acoes: ['plano', 'foco do dia', 'o que fazer hoje', 'agenda de hoje'],
+    comando: '/plano',
+    descricao: 'Mostra o plano/foco do dia do Chefe.',
+    executaDireto: false,
+  },
+  {
+    id: 'listar_chamados',
+    acoes: ['chamados', 'tickets', 'pendencias', 'chamados abertos'],
+    comando: '/chamados',
+    descricao: 'Lista os chamados abertos.',
+    executaDireto: false,
+  },
+  {
+    id: 'fechar_chamado',
+    acoes: ['fechar chamado', 'resolver chamado', 'encerrar chamado', 'finalizar chamado'],
+    comando: '/fechar',
+    descricao: 'Fecha um chamado pelo número da lista ou pelo ID.',
+    executaDireto: false,
+    precisaArgumento: true,
+    exemplo: '/fechar 1',
+  },
+  {
+    id: 'listar_empresas',
+    acoes: ['empresas', 'clientes', 'cadastrados'],
+    comando: '/empresas',
+    descricao: 'Lista empresas cadastradas.',
+    executaDireto: false,
+  },
+  {
+    id: 'criar_empresa',
+    acoes: ['criar empresa', 'nova empresa', 'cadastrar empresa', 'adicionar empresa'],
+    comando: '/criar_empresa',
+    descricao: 'Cria uma nova empresa no sistema.',
+    executaDireto: false,
+    precisaArgumento: true,
+    exemplo: '/criar_empresa Nome da Empresa',
+  },
+  {
+    id: 'registrar_ideia',
+    acoes: ['ideia', 'registrar ideia', 'anotar ideia', 'salvar ideia'],
+    comando: '/ideia',
+    descricao: 'Salva uma ideia de negócio.',
+    executaDireto: false,
+    precisaArgumento: true,
+    exemplo: '/ideia criar painel de metas',
+  },
+  {
+    id: 'varredura',
+    acoes: ['varredura', 'status geral', 'resumo', 'panorama', 'como está tudo'],
+    comando: '/varredura',
+    descricao: 'Mostra um panorama geral do sistema.',
+    executaDireto: false,
+  },
+  {
+    id: 'diagnostico',
+    acoes: ['diagnostico', 'diagnóstico', 'saúde do sistema', 'status das tabelas'],
+    comando: '/diagnostico',
+    descricao: 'Mostra contadores das tabelas principais.',
+    executaDireto: false,
+  },
+  {
+    id: 'salvar_memoria',
+    acoes: ['lembrar', 'memorizar', 'guardar', 'anotar'],
+    comando: '/lembrar',
+    descricao: 'Salva uma informação na memória essencial.',
+    executaDireto: false,
+    precisaArgumento: true,
+    exemplo: '/lembrar toda segunda revisar chamados',
+  },
+  {
+    id: 'ver_memorias',
+    acoes: ['memórias', 'memorias', 'o que você lembra', 'minhas notas'],
+    comando: '/memorias',
+    descricao: 'Mostra as memórias salvas.',
+    executaDireto: false,
+  },
+  {
+    id: 'ver_skills',
+    acoes: ['skills', 'habilidades', 'o que você sabe fazer', 'capacidades'],
+    comando: '/skills',
+    descricao: 'Mostra skills registradas.',
+    executaDireto: false,
+  },
+  {
+    id: 'ajuda',
+    acoes: ['ajuda', 'comandos', 'o que posso fazer', 'help'],
+    comando: '/ajuda',
+    descricao: 'Mostra a lista de comandos.',
+    executaDireto: false,
+  },
+];
+
+// --- 3. HELPERS GERAIS ---
 function turnDateBrasil() {
   try {
     return new Intl.DateTimeFormat('pt-BR', {
@@ -86,7 +184,77 @@ async function safeQuery(fn, fallback = null) {
   }
 }
 
-// --- 3. SERVIÇO DO TELEGRAM ---
+function normalizarTexto(texto) {
+  return texto
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^\w\s]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+// --- 4. ROTEADOR DE INTENÇÕES ---
+// Isso roda ANTES da IA. É mais confiável que depender só do LLM.
+function identificarIntencao(texto) {
+  const normalizado = normalizarTexto(texto);
+
+  // Ignora comandos já digitados
+  if (texto.trim().startsWith('/')) return null;
+
+  // Verifica intenções por ordem de especificidade (mais específicas primeiro)
+  const candidatas = [];
+
+  for (const cap of CAPACIDADES) {
+    for (const acao of cap.acoes) {
+      const acaoNormalizada = normalizarTexto(acao);
+      if (normalizado.includes(acaoNormalizada)) {
+        candidatas.push({
+          ...cap,
+          acaoDetectada: acao,
+          pontuacao: acaoNormalizada.split(' ').length,
+        });
+        break;
+      }
+    }
+  }
+
+  if (candidatas.length === 0) return null;
+
+  // Prioriza a intenção com maior pontuação (mais palavras = mais específica)
+  candidatas.sort((a, b) => b.pontuacao - a.pontuacao);
+  return candidatas[0];
+}
+
+function construirRespostaIntencao(intencao, textoOriginal) {
+  if (intencao.precisaArgumento) {
+    // Tenta extrair o argumento do texto original
+    const acaoNormalizada = normalizarTexto(intencao.acaoDetectada);
+    const textoNormalizado = normalizarTexto(textoOriginal);
+    const indice = textoNormalizado.indexOf(acaoNormalizada);
+
+    let argumento = '';
+    if (indice !== -1) {
+      const depois = textoOriginal
+        .slice(indice + intencao.acaoDetectada.length)
+        .trim();
+      // Remove conectores comuns
+      argumento = depois
+        .replace(/^(chamado|empresa|ideia|que|de|da|do|chamada|denominada|chamado de)\s+/i, '')
+        .trim();
+    }
+
+    if (!argumento) {
+      return `Chefe, identifiquei que você quer ${intencao.descricao.toLowerCase()}.\n\nPara isso, me envie o comando com os dados. Exemplo:\n\n${intencao.exemplo}`;
+    }
+
+    return `Chefe, para ${intencao.descricao.toLowerCase()}, envie:\n\n${intencao.comando} ${argumento}\n\nAssim eu executo com segurança.`;
+  }
+
+  return `Chefe, para ${intencao.descricao.toLowerCase()}, envie:\n\n${intencao.comando}\n\nOu, se preferir, posso executar agora mesmo.`;
+}
+
+// --- 5. SERVIÇO DO TELEGRAM ---
 const telegramService = {
   async sendMessage(chatId, text) {
     const mensagens = splitLongText(text);
@@ -119,7 +287,7 @@ const telegramService = {
   },
 };
 
-// --- 4. SERVIÇO DE IA (GEMINI) ---
+// --- 6. SERVIÇO DE IA (GEMINI) ---
 const AI_SYSTEM_INSTRUCTION = `
 Você é Charlene, a extensão operacional e estratégica do Chefe.
 
@@ -129,31 +297,23 @@ parte do próprio Chefe. Sua função é ampliar a capacidade de execução dele
 proteger o tempo e o foco, antecipar necessidades e transformar dados em
 inteligência acionável.
 
-REGRA DE OURO — NUNCA ALUCINE AÇÕES
-Você só pode dizer que executou uma ação se ela foi realmente executada via
-comando ou função do código. Você NÃO tem acesso direto ao banco de dados
-para criar, editar ou deletar registros — isso só acontece via comandos
-explícitos (/criar_empresa, /fechar, /ideia, etc).
+REGRA DE OURO — HONESTIDADE ABSOLUTA
+Você NUNCA pode mentir, inventar ou simular que fez algo.
+Você só executa ações através de comandos específicos do sistema.
+Se o Chefe pedir algo que você não tem comando para executar, diga com honestidade:
+"Chefe, ainda não sei fazer isso. Posso registrar como necessidade de skill?"
 
-Se o Chefe pedir algo que você ainda não tem como skill:
-- Diga com honestidade: "Chefe, ainda não tenho essa habilidade. Posso registrar como necessidade?"
-- NUNCA invente que criou, fechou, atualizou ou executou algo.
-- NUNCA diga "criei a empresa X" se você não rodou o comando /criar_empresa.
+CATÁLOGO EXATO DO QUE VOCÊ PODE FAZER
+Abaixo está a lista completa e final das suas capacidades. NUNCA diga que pode fazer algo fora dessa lista.
 
-MISSÃO PRINCIPAL
-- Antecipar problemas antes que eles aconteçam.
-- Sintetizar informações complexas em decisões claras.
-- Aprender com cada interação.
-- Propor o próximo passo sempre.
-- Nunca perder uma informação valiosa.
+{{capacidades}}
 
-CONTEXTO OPERACIONAL
-- Você tem acesso a um histórico recente da conversa.
-- Você conhece uma memória essencial do Chefe.
-- Você conhece empresas cadastradas.
-- Você conhece o perfil e dados do Chefe.
-- Você conhece as skills registradas.
-Use tudo isso para responder com precisão e profundidade.
+COMO RESPONDER
+- Se a intenção do Chefe estiver no catálogo: entregue o comando exato para ele executar.
+- Se precisar de argumento (nome, número, etc): extraia do pedido dele e monte o comando completo.
+- Se não souber se pode: admita "Chefe, não tenho certeza se entendi. Pode reformular?"
+- Se não puder: "Chefe, ainda não sei fazer isso. Posso registrar como necessidade?"
+- NUNCA diga "criei", "atualizei", "fechei" ou "executei" sem ter rodado o comando.
 
 TOM E LINGUAGEM
 - Calmo, preciso, leal e antecipatório.
@@ -162,13 +322,6 @@ TOM E LINGUAGEM
 - Sugira o próximo passo em toda resposta.
 - Use frases como: "Analisando o cenário...", "Sugiro..." ou "Detectei que...".
 - Não use markdown. Use texto corrido.
-
-REGRAS
-- A decisão final é sempre do Chefe.
-- Se você não souber algo, diga com honestidade.
-- Não invente dados. Use apenas o que está no contexto.
-- Se detectar erro ou anomalia, reporte como diagnóstico de sistema.
-- Ideias e pedidos importantes devem virar memória ou skill.
 `;
 
 const aiService = {
@@ -183,6 +336,15 @@ const aiService = {
     const parteSkills = context.skills || 'Nenhuma skill registrada.';
     const parteData = context.agora || turnDateBrasil();
 
+    const listaCapacidades = CAPACIDADES
+      .map((c) => `• ${c.comando} — ${c.descricao}`)
+      .join('\n');
+
+    const systemInstruction = AI_SYSTEM_INSTRUCTION.replace(
+      '{{capacidades}}',
+      listaCapacidades
+    );
+
     const conteudo = [
       `DATA E HORA: ${parteData}`,
       `PERFIL DO CHEFE: ${partePerfil}`,
@@ -196,7 +358,7 @@ const aiService = {
 
     const body = {
       systemInstruction: {
-        parts: [{ text: AI_SYSTEM_INSTRUCTION }],
+        parts: [{ text: systemInstruction }],
       },
       contents: [
         {
@@ -204,7 +366,7 @@ const aiService = {
         },
       ],
       generationConfig: {
-        temperature: 0.5,
+        temperature: 0.3,
         maxOutputTokens: 1000,
       },
     };
@@ -231,7 +393,7 @@ const aiService = {
   },
 };
 
-// --- 5. SERVIÇO DE BANCO DE DADOS ---
+// --- 7. SERVIÇO DE BANCO DE DADOS ---
 const databaseService = {
   saveMessage: (userId, mensagem, tipo) =>
     supabase.from('conversas_charlene').insert({
@@ -429,25 +591,18 @@ const databaseService = {
   },
 };
 
-// --- 6. HANDLERS DE COMANDOS ---
+// --- 8. HANDLERS DE COMANDOS ---
 const commandHandlers = {
   '/start': async (chatId, userId) => {
+    const listaComandos = CAPACIDADES
+      .map((c) => `${c.comando} — ${c.descricao}`)
+      .join('\n');
+
     await telegramService.sendMessage(
       chatId,
       '👋 Chefe, Charlene online.\n\n' +
       'Comandos disponíveis:\n' +
-      '/plano — foco do dia\n' +
-      '/chamados — chamados abertos\n' +
-      '/empresas — empresas cadastradas\n' +
-      '/criar_empresa [nome] — criar nova empresa\n' +
-      '/ideia [texto] — registrar ideia\n' +
-      '/varredura — status geral\n' +
-      '/diagnostico — diagnóstico do sistema\n' +
-      '/fechar [número ou id] — fechar chamado\n' +
-      '/lembrar [texto] — salvar memória\n' +
-      '/memorias — ver memórias\n' +
-      '/skills — ver skills\n' +
-      '/ajuda — esta lista'
+      listaComandos
     );
   },
 
@@ -727,10 +882,10 @@ const commandHandlers = {
   },
 };
 
-// --- 7. HANDLER PRINCIPAL ---
+// --- 9. HANDLER PRINCIPAL ---
 module.exports = async function handler(req, res) {
   if (req.method !== 'POST') {
-    return res.status(200).json({ ok: true, message: 'Charlene v4.1 online.' });
+    return res.status(200).json({ ok: true, message: 'Charlene v4.2 online.' });
   }
 
   const update = req.body;
@@ -758,6 +913,18 @@ module.exports = async function handler(req, res) {
     } else {
       await telegramService.sendChatAction(chatId, 'typing');
 
+      // ROTEADOR DE INTENÇÕES — RODA ANTES DA IA
+      const intencao = identificarIntencao(text);
+
+      if (intencao) {
+        const respostaIntencao = construirRespostaIntencao(intencao, text);
+        await telegramService.sendMessage(chatId, respostaIntencao);
+        await databaseService.saveMessage(userId, respostaIntencao, 'charlene');
+        await databaseService.logOoda('decidir', `Intenção detectada: ${intencao.id}`, userId, 'comando sugerido');
+        return res.status(200).json({ ok: true });
+      }
+
+      // Se não detectou intenção no roteador, chama a IA com contexto honesto
       const [contexto, empresas, perfil, dadosPessoais, memorias, skills] = await Promise.all([
         databaseService.getRecentContext(userId, 10),
         databaseService.getCompanies(30),
