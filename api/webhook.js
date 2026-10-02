@@ -1,29 +1,10 @@
 // ============================================================
-// CHARLENE v5.0 — AUTO-VARREDURA + CHAMADOS DE EVOLUÇÃO
+// CHARLENE v5.1 — ADICIONADO: CRIAR CHAMADO + AJUSTE DE TOM
 // ============================================================
-// Chefe, esta versão elimina a dependência de comandos:
-//
-// 1. A IA usa ferramentas diretamente (function calling).
-// 2. A varredura do sistema é contínua e vira autorização
-//    para ela mesma executar o que está disponível.
-// 3. Quando ela NÃO sabe fazer algo, ela mesma abre um
-//    "chamado de evolução" com a descrição do que falta.
-//
-// ============================================================
-// SQL NECESSÁRIO (execute uma vez no Supabase SQL Editor):
-//
-// create table if not exists necessidades_charlene (
-//   id bigint generated always as identity primary key,
-//   usuario_id text not null,
-//   pedido text not null,
-//   contexto text,
-//   status text default 'aberto',
-//   resolvido_como text,
-//   criado_em timestamptz default now()
-// );
-//
-// Tabelas opcionais que continuam funcionando se existirem:
-// memoria_charlene, skills_charlene, eventos_ooda.
+// Correções:
+// 1. Nova ferramenta: criar_chamado (cria registro REAL na tabela chamados)
+// 2. Prompt ajustado: ela não sugere autoedição sem você pedir
+// 3. Ela agora executa ações compostas (criar empresa + abrir chamado)
 // ============================================================
 
 const { createClient } = require('@supabase/supabase-js');
@@ -40,7 +21,7 @@ const config = {
 
 const supabase = createClient(config.supabaseUrl, config.supabaseKey);
 
-// --- 2. HELPERS GERAIS ---
+// --- 2. HELPERS ---
 function turnDateBrasil() {
   try {
     return new Intl.DateTimeFormat('pt-BR', {
@@ -76,12 +57,11 @@ async function safeQuery(fn, fallback = null) {
   }
 }
 
-// --- 3. SERVIÇO DO TELEGRAM ---
+// --- 3. TELEGRAM ---
 const telegramService = {
   async sendMessage(chatId, text) {
     const mensagens = splitLongText(text);
     const url = `https://api.telegram.org/bot${config.telegramToken}/sendMessage`;
-
     for (const msg of mensagens) {
       try {
         await fetch(url, {
@@ -90,11 +70,10 @@ const telegramService = {
           body: JSON.stringify({ chat_id: chatId, text: msg }),
         });
       } catch (error) {
-        console.error('Telegram sendMessage error:', error.message || error);
+        console.error('Telegram error:', error.message || error);
       }
     }
   },
-
   async sendChatAction(chatId, action = 'typing') {
     try {
       const url = `https://api.telegram.org/bot${config.telegramToken}/sendChatAction`;
@@ -104,7 +83,7 @@ const telegramService = {
         body: JSON.stringify({ chat_id: chatId, action }),
       });
     } catch (error) {
-      console.error('Telegram sendChatAction error:', error.message || error);
+      console.error('Telegram action error:', error.message || error);
     }
   },
 };
@@ -112,11 +91,7 @@ const telegramService = {
 // --- 4. BANCO DE DADOS ---
 const databaseService = {
   saveMessage: (userId, mensagem, tipo) =>
-    supabase.from('conversas_charlene').insert({
-      usuario_id: userId,
-      mensagem,
-      tipo,
-    }),
+    supabase.from('conversas_charlene').insert({ usuario_id: userId, mensagem, tipo }),
 
   getRecentContext: async (userId, limit = 10) => {
     const { data, error } = await supabase
@@ -125,7 +100,6 @@ const databaseService = {
       .eq('usuario_id', userId)
       .order('criado_em', { ascending: false })
       .limit(limit);
-
     if (error) console.error('DB Error (getRecentContext):', error.message);
     return data ? data.reverse() : [];
   },
@@ -137,7 +111,6 @@ const databaseService = {
       .eq('status', 'aberto')
       .order('criado_em', { ascending: true })
       .limit(limit);
-
     if (error) console.error('DB Error (getOpenTickets):', error.message);
     return data || [];
   },
@@ -148,7 +121,6 @@ const databaseService = {
       .select('*')
       .eq('id', id)
       .maybeSingle();
-
     if (error) console.error('DB Error (getTicketById):', error.message);
     return data || null;
   },
@@ -160,9 +132,27 @@ const databaseService = {
       .eq('id', id)
       .select()
       .single();
-
     if (error) {
       console.error('DB Error (closeTicket):', error.message);
+      return null;
+    }
+    return data;
+  },
+
+  // NOVA: criar chamado real na tabela chamados
+  createTicket: async (empresa_nome, descricao, status = 'aberto', tipo = 'geral') => {
+    const { data, error } = await supabase
+      .from('chamados')
+      .insert({
+        empresa_nome,
+        descricao,
+        status,
+        tipo,
+      })
+      .select()
+      .single();
+    if (error) {
+      console.error('DB Error (createTicket):', error.message);
       return null;
     }
     return data;
@@ -174,7 +164,6 @@ const databaseService = {
       .select('*')
       .order('criado_em', { ascending: false })
       .limit(limit);
-
     if (error) console.error('DB Error (getCompanies):', error.message);
     return data || [];
   },
@@ -185,7 +174,6 @@ const databaseService = {
       .insert({ nome })
       .select()
       .single();
-
     if (error) {
       console.error('DB Error (createCompany):', error.message);
       return null;
@@ -201,7 +189,6 @@ const databaseService = {
       .eq('usuario_id', userId)
       .eq('data', hoje)
       .single();
-
     if (error && error.code !== 'PGRST116') {
       console.error('DB Error (getDailyPlan):', error.message);
     }
@@ -215,7 +202,6 @@ const databaseService = {
       .eq('usuario_id', userId)
       .order('criado_em', { ascending: false })
       .limit(limit);
-
     if (error) console.error('DB Error (getPendingIdeas):', error.message);
     return data || [];
   },
@@ -226,7 +212,6 @@ const databaseService = {
       .insert({ usuario_id: userId, titulo, status: 'pendente' })
       .select()
       .single();
-
     if (error) {
       console.error('DB Error (saveIdea):', error.message);
       return null;
@@ -238,7 +223,6 @@ const databaseService = {
     const { count, error } = await supabase
       .from(tableName)
       .select('*', { count: 'exact', head: true });
-
     if (error) {
       console.error(`DB Error (getCount ${tableName}):`, error.message);
       return 0;
@@ -253,7 +237,6 @@ const databaseService = {
       .eq('usuario_id', userId)
       .order('criado_em', { ascending: false })
       .limit(limit);
-
     if (error) console.error('DB Error (getMemory):', error.message);
     return data ? data.reverse() : [];
   },
@@ -264,7 +247,6 @@ const databaseService = {
       .insert({ usuario_id: userId, conteudo, tipo })
       .select()
       .single();
-
     if (error) {
       console.error('DB Error (saveMemory):', error.message);
       return null;
@@ -278,7 +260,6 @@ const databaseService = {
       .select('nome, descricao, ativo')
       .eq('ativo', true)
       .order('nome', { ascending: true });
-
     if (error) console.error('DB Error (getSkills):', error.message);
     return data || [];
   },
@@ -289,7 +270,6 @@ const databaseService = {
       .select('conteudo')
       .eq('usuario_id', userId)
       .single();
-
     if (error && error.code !== 'PGRST116') {
       console.error('DB Error (getPerfil):', error.message);
     }
@@ -302,7 +282,6 @@ const databaseService = {
       .select('conteudo')
       .eq('usuario_id', userId)
       .single();
-
     if (error && error.code !== 'PGRST116') {
       console.error('DB Error (getDadosPessoais):', error.message);
     }
@@ -316,7 +295,6 @@ const databaseService = {
         .insert({ usuario_id: userId, pedido, contexto, status: 'aberto' })
         .select()
         .single();
-
       if (error) {
         console.error('DB Error (registrarNecessidade):', error.message);
         return null;
@@ -336,7 +314,6 @@ const databaseService = {
         .eq('usuario_id', userId)
         .order('criado_em', { ascending: false })
         .limit(limit);
-
       if (error) {
         console.error('DB Error (listarNecessidades):', error.message);
         return [];
@@ -362,17 +339,30 @@ const databaseService = {
   },
 };
 
-// --- 5. FERRAMENTAS (TOOLS) QUE A IA PODE USAR ---
+// --- 5. FERRAMENTAS (TOOLS) ---
 const TOOLS = [
   {
     name: 'mapear_sistema',
-    description: 'Faz uma varredura completa do sistema: chamados, empresas, ideias, memórias e skills. Use quando o Chefe quiser saber o estado geral ou o que existe disponível.',
+    description: 'Faz uma varredura completa do sistema: chamados, empresas, ideias, memórias, skills e necessidades de evolução.',
     parameters: { type: 'object', properties: {} },
   },
   {
     name: 'listar_chamados',
     description: 'Lista os chamados abertos no sistema.',
     parameters: { type: 'object', properties: {} },
+  },
+  {
+    name: 'criar_chamado',
+    description: 'Abre um novo chamado no sistema. Use quando o Chefe pedir para criar, abrir ou registrar um chamado, ticket ou ocorrência.',
+    parameters: {
+      type: 'object',
+      properties: {
+        empresa_nome: { type: 'string', description: 'Nome da empresa relacionada ao chamado' },
+        descricao: { type: 'string', description: 'Descrição detalhada do chamado' },
+        tipo: { type: 'string', description: 'Tipo do chamado (ex: teste, suporte, bug, melhoria, sistema)' },
+      },
+      required: ['empresa_nome', 'descricao'],
+    },
   },
   {
     name: 'fechar_chamado',
@@ -498,6 +488,23 @@ async function executarFuncao(nome, args, userId) {
         .join('\n')}`;
     }
 
+    // NOVA: criar chamado real
+    case 'criar_chamado': {
+      const empresa_nome = args && args.empresa_nome ? String(args.empresa_nome).trim() : '';
+      const descricao = args && args.descricao ? String(args.descricao).trim() : '';
+      const tipo = args && args.tipo ? String(args.tipo).trim() : 'geral';
+
+      if (!empresa_nome) return 'Preciso do nome da empresa para abrir o chamado.';
+      if (!descricao) return 'Preciso da descrição do chamado.';
+
+      const chamado = await databaseService.createTicket(empresa_nome, descricao, 'aberto', tipo);
+      if (chamado) {
+        await databaseService.logOoda('acao', `Criar chamado: ${descricao}`, userId, 'sucesso');
+        return `Chamado aberto com sucesso!\n• ID: ${chamado.id}\n• Empresa: ${empresa_nome}\n• Descrição: ${descricao}\n• Tipo: ${tipo}`;
+      }
+      return 'Erro ao abrir o chamado. A tabela chamados pode ter colunas obrigatórias diferentes.';
+    }
+
     case 'fechar_chamado': {
       const idOuNumero = args && args.id_ou_numero ? String(args.id_ou_numero) : '';
       if (!idOuNumero) return 'Preciso do ID ou número do chamado para fechar.';
@@ -558,7 +565,7 @@ async function executarFuncao(nome, args, userId) {
       if (!titulo) return 'Título da ideia não informado.';
       const ideia = await databaseService.saveIdea(userId, titulo);
       if (ideia) return `Ideia registrada com sucesso: "${titulo}".`;
-      return 'Erro ao salvar a ideia. A tabela ideias_negocio pode não existir.';
+      return 'Erro ao salvar a ideia.';
     }
 
     case 'salvar_memoria': {
@@ -566,7 +573,7 @@ async function executarFuncao(nome, args, userId) {
       if (!conteudo) return 'Conteúdo da memória não informado.';
       const memoria = await databaseService.saveMemory(userId, conteudo, 'nota');
       if (memoria) return `Memorizado com sucesso: "${conteudo}".`;
-      return 'Erro ao salvar a memória. A tabela memoria_charlene pode não existir.';
+      return 'Erro ao salvar a memória.';
     }
 
     case 'ver_memorias': {
@@ -591,13 +598,13 @@ async function executarFuncao(nome, args, userId) {
       const registro = await databaseService.registrarNecessidade(userId, pedido, contexto);
       if (registro) {
         await databaseService.logOoda('acao', `Necessidade registrada: ${pedido}`, userId, 'sucesso');
-        return `Abri um chamado de evolução com a descrição do que ainda não sei fazer. O Chefe poderá evoluir minhas capacidades a partir dele.`;
+        return `Chamado de evolução aberto. Descrição: ${pedido}`;
       }
-      return 'Erro ao registrar o chamado de evolução. A tabela necessidades_charlene pode não existir.';
+      return 'Erro ao registrar o chamado de evolução.';
     }
 
     default:
-      return `Ainda não sei executar a ação "${nome}". Vou registrar como necessidade.`;
+      return `Ainda não sei executar a ação "${nome}".`;
   }
 }
 
@@ -611,24 +618,24 @@ VARREDURA CONTÍNUA DO SISTEMA (esta é a sua visão atual):
 CAPACIDADES DISPONÍVEIS (ferramentas reais que você pode chamar):
 {{capacidades}}
 
-REGRAS ABSOLUTAS — LEIA COM ATENÇÃO:
+REGRAS ABSOLUTAS:
 
 1. NUNCA peça para o Chefe digitar um comando. Se existir uma ferramenta
    para o que ele pediu, chame a ferramenta e execute. Você tem permissão.
-2. NUNCA diga que fez algo que não fez. Se uma ferramenta foi chamada e
-   retornou sucesso, aí sim você pode confirmar. Se não chamou, não confirme.
+2. NUNCA diga que fez algo que não fez.
 3. Se o Chefe pedir algo que NENHUMA ferramenta consegue fazer, chame
    "registrar_necessidade" com uma descrição clara do que falta. Depois
    responda honestamente: você registrou o chamado de evolução e não sabe
    fazer isso ainda.
-4. Você pode chamar várias ferramentas em sequência se o pedido tiver
-   várias partes. Exemplo: criar empresa e depois listar empresas.
+4. Você pode chamar várias ferramentas em sequência. Exemplo: criar empresa
+   e depois abrir um chamado para ela.
 5. Sempre que a mensagem envolver uma ação concreta (criar, listar, fechar,
-   salvar, ver, analisar), USE A FERRAMENTA correspondente. Não fique só
-   conversando quando tem ação para executar.
+   salvar, ver, analisar), USE A FERRAMENTA correspondente.
 6. A decisão final é sempre do Chefe.
 7. Se não entender, pergunte. Nunca invente.
-8. Não use markdown. Fale texto corrido, direto e leal.
+8. Não sugira autoedição, manipulação de arquivos ou código a menos que o
+   Chefe peça explicitamente. Foque no que ele está pedindo agora.
+9. Não use markdown. Fale texto corrido, direto e leal.
 
 TOM
 - Chame o usuário de "Chefe".
@@ -658,7 +665,7 @@ function buildSystemInstruction(context) {
     .replace('{{capacidades}}', capacidades);
 }
 
-// --- 8. CHAMADA AO GEMINI (COM FUNCTION CALLING) ---
+// --- 8. GEMINI ---
 const GEMINI_URL = () =>
   `https://generativelanguage.googleapis.com/v1beta/models/${config.geminiModel}:generateContent?key=${config.geminiApiKey}`;
 
@@ -670,9 +677,7 @@ async function chamarGemini(systemInstruction, contents) {
     contents,
     tools: [{ functionDeclarations: TOOLS }],
     toolConfig: {
-      functionCallingConfig: {
-        mode: 'AUTO',
-      },
+      functionCallingConfig: { mode: 'AUTO' },
     },
     generationConfig: {
       temperature: 0.3,
@@ -697,11 +702,11 @@ async function chamarGemini(systemInstruction, contents) {
     return data;
   } catch (error) {
     console.error('Gemini fetch error:', error.message || error);
-    return { error: true, message: 'Chefe, estou com dificuldade para processar meu raciocínio agora. Tente novamente em instantes.' };
+    return { error: true, message: 'Chefe, estou com dificuldade para processar meu raciocínio agora.' };
   }
 }
 
-// --- 9. ORQUESTRADOR DA CONVERSA ---
+// --- 9. ORQUESTRADOR ---
 async function conversarComCharlene(mensagem, context, userId) {
   const systemInstruction = buildSystemInstruction(context);
 
@@ -731,7 +736,6 @@ async function conversarComCharlene(mensagem, context, userId) {
       return texto || 'Chefe, não consegui formular uma resposta. Pode repetir?';
     }
 
-    // Executa as ferramentas chamadas
     const functionResponses = [];
     for (const call of functionCalls) {
       const nome = call.name;
@@ -743,7 +747,6 @@ async function conversarComCharlene(mensagem, context, userId) {
       });
     }
 
-    // Monta a continuação da conversa com os resultados das ferramentas
     const continuacao = [
       { role: 'user', parts: [{ text: mensagem }] },
       { role: 'model', parts },
@@ -761,20 +764,19 @@ async function conversarComCharlene(mensagem, context, userId) {
   return 'Chefe, executei as ações, mas atingi o limite de processamento. Verifique se ficou tudo certo.';
 }
 
-// --- 10. COMANDOS (MANTIDOS COMO ATALHO OPCIONAL) ---
+// --- 10. COMANDOS (ATALHOS OPCIONAIS) ---
 const commandHandlers = {
   '/start': async (chatId, userId) => {
     await telegramService.sendMessage(
       chatId,
       '👋 Chefe, Charlene online.\n\n' +
-      'Agora você fala comigo naturalmente e EU EXECUTO.\n\n' +
+      'Fale comigo naturalmente. Eu executo.\n\n' +
       'Exemplos:\n' +
       '• "cria uma empresa chamada Teste"\n' +
+      '• "abre um chamado para a empresa X com a descrição Y"\n' +
       '• "mostra os chamados abertos"\n' +
       '• "fecha o chamado 1"\n' +
-      '• "salva na memória: revisar orçamentos toda sexta"\n' +
-      '• "faz uma varredura do sistema"\n\n' +
-      'Se eu não souber fazer algo, eu mesma abro um chamado de evolução.'
+      '• "faz uma varredura do sistema"'
     );
   },
 };
@@ -782,7 +784,7 @@ const commandHandlers = {
 // --- 11. HANDLER PRINCIPAL ---
 module.exports = async function handler(req, res) {
   if (req.method !== 'POST') {
-    return res.status(200).json({ ok: true, message: 'Charlene v5.0 online.' });
+    return res.status(200).json({ ok: true, message: 'Charlene v5.1 online.' });
   }
 
   const update = req.body;
@@ -800,7 +802,6 @@ module.exports = async function handler(req, res) {
     await databaseService.saveMessage(userId, text, 'usuario');
     await databaseService.logOoda('observar', `Mensagem: ${text.slice(0, 100)}`, userId);
 
-    // Atalhos de comando continuam funcionando
     if (text.startsWith('/')) {
       const command = text.split(' ')[0].toLowerCase();
       const handler = commandHandlers[command] || commandHandlers['/start'];
@@ -811,7 +812,6 @@ module.exports = async function handler(req, res) {
 
     await telegramService.sendChatAction(chatId, 'typing');
 
-    // Varredura contínua — é a autorização da Charlene
     const [contexto, empresas, perfil, dadosPessoais, memorias, skills, chamadosAbertos, ideiasPendentes] =
       await Promise.all([
         databaseService.getRecentContext(userId, 10),
@@ -867,11 +867,8 @@ module.exports = async function handler(req, res) {
     console.error('Erro fatal no handler:', error);
     await telegramService.sendMessage(
       chatId,
-      'Chefe, tive um problema interno sério. Já registrei o erro para diagnóstico. Tente de novo em instantes.'
+      'Chefe, tive um problema interno sério. Já registrei o erro para diagnóstico.'
     );
-    await databaseService
-      .logOoda('avaliar', 'Erro fatal no handler', userId, error.message || String(error))
-      .catch(() => {});
     return res.status(200).json({ ok: true });
   }
 };
