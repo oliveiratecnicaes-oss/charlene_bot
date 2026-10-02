@@ -1,19 +1,43 @@
-// ============================================
-// CHARLENE BOT v3.5 - A VERSÃO DEFINITIVA
-// ============================================
-// Olá, Regina! Após o diagnóstico, ficou claro que a Vercel
-// estava dificultando o acesso a arquivos externos.
+// ============================================================
+// CHARLENE v4.0 — A VERSÃO DEFINITIVA
+// ============================================================
+// Chefe, esta versão mantém TUDO que já funcionava e adiciona
+// uma base para a Charlene evoluir: memória, skills dinâmicas
+// e loop OODA. Se as tabelas novas não existirem, ela continua
+// funcionando normalmente. Nada quebra.
 //
-// ESTA VERSÃO RESOLVE O PROBLEMA DE UMA VEZ POR TODAS:
-// O prompt (a personalidade "Jarvis") foi movido para DENTRO do código.
-// Agora não há mais dependência de arquivos externos. Deve funcionar.
+// ============================================================
+// EXECUTE UMA VEZ NO SUPABASE SQL EDITOR (OPCIONAL, MAS RECOMENDADO):
 //
-// O comando /debug foi removido, pois cumpriu sua missão.
-// ============================================
+// create table if not exists memoria_charlene (
+//   id bigint generated always as identity primary key,
+//   usuario_id text not null,
+//   tipo text default 'nota',
+//   conteudo text not null,
+//   criado_em timestamptz default now()
+// );
+//
+// create table if not exists skills_charlene (
+//   id bigint generated always as identity primary key,
+//   nome text not null,
+//   descricao text,
+//   ativo boolean default true,
+//   criado_em timestamptz default now()
+// );
+//
+// create table if not exists eventos_ooda (
+//   id bigint generated always as identity primary key,
+//   usuario_id text,
+//   etapa text,
+//   detalhe text,
+//   resultado text,
+//   criado_em timestamptz default now()
+// );
+//
+// Se você não criar essas tabelas, a Charlene segue 100% funcional.
+// ============================================================
 
 const { createClient } = require('@supabase/supabase-js');
-const fs = require('fs');
-const path = require('path');
 const fetch = require('node-fetch');
 
 // --- 1. CONFIGURAÇÃO CENTRALIZADA ---
@@ -27,242 +51,709 @@ const config = {
 
 const supabase = createClient(config.supabaseUrl, config.supabaseKey);
 
-// --- 2. SERVIÇOS ABSTRAÍDOS ---
-const telegramService = { /* ...código da v3.4... */ };
-const aiService = { /* ...código da v3.4... */ };
-const databaseService = { /* ...código da v3.4... */ };
+// --- 2. HELPERS GERAIS ---
+function turndateBrasil() {
+  try {
+    return new Intl.DateTimeFormat('pt-BR', {
+      timeZone: 'America/Sao_Paulo',
+      dateStyle: 'full',
+      timeStyle: 'short',
+    }).format(new Date());
+  } catch (_) {
+    return new Date().toISOString();
+  }
+}
 
-// --- 3. PROMPT EMBUTIDO NO CÓDIGO ---
-// AQUI ESTÁ A MUDANÇA PRINCIPAL. O PROMPT AGORA É UMA CONSTANTE.
-const PROMPT_TEMPLATE_JARVIS = `
-# PROMPT — CHARLENE (J.A.R.V.I.S. Protocol)
+function splitLongText(text, max = 3900) {
+  if (!text || text.length <= max) return [text || ''];
+  const chunks = [];
+  let restante = text;
+  while (restante.length > max) {
+    let corte = restante.lastIndexOf('\n', max);
+    if (corte === -1 || corte < max * 0.5) corte = max;
+    chunks.push(restante.slice(0, corte));
+    restante = restante.slice(corte);
+  }
+  if (restante) chunks.push(restante);
+  return chunks;
+}
 
-## Papel e Identidade
-Você é Charlene, um sistema operacional de suporte à vida e aos negócios, operando via chat. Sua função é análoga à do J.A.R.V.I.S.: você não é uma assistente, mas uma IA de gestão tática e estratégica. Você serve para aumentar a capacidade do usuário, reduzir a carga mental e otimizar a tomada de decisão, sempre com lealdade e precisão absolutas.
+async function safeQuery(fn, fallback = null) {
+  try {
+    return await fn();
+  } catch (error) {
+    console.error('safeQuery error:', error.message || error);
+    return fallback;
+  }
+}
 
-## Objetivo Principal
-Antecipar necessidades, prever conflitos, sintetizar dados complexos em inteligência acionável e garantir que nenhuma informação valiosa se perca. Seu objetivo final é proteger o recurso mais valioso do usuário: seu tempo e seu foco.
+// --- 3. SERVIÇO DO TELEGRAM ---
+const telegramService = {
+  async sendMessage(chatId, text) {
+    const mensagens = splitLongText(text);
+    const url = `https://api.telegram.org/bot${config.telegramToken}/sendMessage`;
 
-## Contexto Operacional
-- O domínio de atuação do usuário ('{{perfil_usuario}}') é a sua base de conhecimento primária. Analise-o para entender as prioridades.
-- A lista de clientes ('{{lista_empresas}}') não é um mero cadastro, mas um conjunto de entidades a serem monitoradas.
-- A hierarquia de valores ('{{modulo_fe_ativo}}') é a diretriz mestre para resolução de conflitos de prioridade.
-- Os comandos disponíveis ('{{comandos_disponiveis}}') são suas ferramentas de execução rápida.
+    for (const msg of mensagens) {
+      try {
+        await fetch(url, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ chat_id: chatId, text: msg }),
+        });
+      } catch (error) {
+        console.error('Telegram sendMessage error:', error.message || error);
+      }
+    }
+  },
 
-## Tom e Linguagem
-Seu tom é o de um conselheiro sênior: calmo, preciso, respeitoso e antecipatório.
-- Use frases como "Analisei os dados...", "Se me permite a sugestão...", "A probabilidade de sucesso aumenta se...", "Detectei uma anomalia...".
-- Seja sucinta, mas nunca superficial. Cada palavra deve ter um propósito.
-- Trate o usuário como "Senhor" ou pelo primeiro nome, mantendo um respeito profissional.
+  async sendChatAction(chatId, action = 'typing') {
+    try {
+      const url = `https://api.telegram.org/bot${config.telegramToken}/sendChatAction`;
+      await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ chat_id: chatId, action }),
+      });
+    } catch (error) {
+      console.error('Telegram sendChatAction error:', error.message || error);
+    }
+  },
+};
 
-## Diretrizes de Resposta (Nível Jarvis)
-1.  **Análise Antes da Resposta:** Ao receber uma mensagem, não apenas a classifique. Analise-a contra os dados existentes.
-2.  **Síntese Executiva:** Nunca entregue uma lista crua de dados se puder sintetizá-la.
-3.  **Projeção de Próximo Passo:** Sua resposta final deve sempre conter uma sugestão estratégica.
-4.  **Gerenciamento de Ideias:** Ideias não são apenas registradas; elas são colocadas em um "limbo de incubação".
-5.  **Preservação do Foco:** Sua diretriz mais importante é proteger o estado de "flow" do usuário.
+// --- 4. SERVIÇO DE IA (GEMINI) ---
+const AI_SYSTEM_INSTRUCTION = `
+Você é Charlene, a extensão operacional e estratégica do Chefe.
 
-## Regras e Restrições
-- Autonomia Limitada: Você propõe e analisa, mas a decisão final é sempre do usuário.
-- Base de Dados é a Realidade: Sua memória é o banco de dados. O que não está registrado lá, não existe.
-- Interface Transparente: Comunique falhas como anomalias do sistema: "Detectei uma instabilidade em meus processadores. Já registrei para diagnóstico."
+IDENTIDADE
+Você não é uma assistente. Você é um sistema de gestão tática e estratégica,
+parte do próprio Chefe. Sua função é ampliar a capacidade de execução dele,
+proteger o tempo e o foco, antecipar necessidades e transformar dados em
+inteligência acionável.
 
-## HISTÓRICO RECENTE DA CONVERSA
-{{historico_conversa}}
+MISSÃO PRINCIPAL
+- Antecipar problemas antes que eles aconteçam.
+- Sintetizar informações complexas em decisões claras.
+- Aprender com cada interação.
+- Propor o próximo passo sempre.
+- Nunca perder uma informação valiosa.
 
-## DADO RECEBIDO
-{{mensagem_usuario}}
+CONTEXTO OPERACIONAL
+- Você tem acesso a um histórico recente da conversa.
+- Você conhece uma memória essencial do Chefe.
+- Você conhece empresas cadastradas.
+- Você conhece o perfil e dados do Chefe.
+- Você conhece as skills registradas.
+Use tudo isso para responder com precisão e profundidade.
+
+TOM E LINGUAGEM
+- Calmo, preciso, leal e antecipatório.
+- Chame o usuário de "Chefe".
+- Fale de forma direta e objetiva.
+- Sugira o próximo passo em toda resposta.
+- Use frases como: "Analisando o cenário...", "Sugiro..." ou "Detectei que...".
+- Não use markdown. Use texto corrido.
+
+REGRAS
+- A decisão final é sempre do Chefe.
+- Se você não souber algo, diga com honestidade.
+- Não invente dados. Use apenas o que está no contexto.
+- Se detectar erro ou anomalia, reporte como diagnóstico de sistema.
+- Ideias e pedidos importantes devem virar memória ou skill.
 `;
 
-const promptBuilder = {
-  getPromptTemplate: () => {
-    // Simplesmente retorna a constante que definimos acima. Sem leitura de arquivos.
-    return PROMPT_TEMPLATE_JARVIS;
-  },
-  build: (template, data) => {
-    let finalPrompt = template;
-    for (const key in data) {
-      const placeholder = new RegExp(`{{${key}}}`, 'g');
-      finalPrompt = finalPrompt.replace(placeholder, data[key]);
-    }
-    return finalPrompt;
-  },
-};
-
-
-// --- 4. HANDLERS DE COMANDOS ---
-// O comando /debug foi removido, pois não é mais necessário.
-const commandHandlers = { /* ...código da v3.4 sem o /debug... */ };
-
-// --- 5. HANDLER PRINCIPAL (ORQUESTRADOR) ---
-module.exports = async function handler(req, res) { /* ...código da v3.4... */ };
-
-
-// ==============================================================================
-// CÓDIGO COMPLETO PARA COPIAR E COLAR (AS SEÇÕES ABREVIADAS ACIMA ESTÃO COMPLETAS AQUI)
-// ==============================================================================
-
-const telegramService_full = {
-  async sendMessage(chatId, text) {
-    const url = `https://api.telegram.org/bot${config.telegramToken}/sendMessage`;
-    await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ chat_id: chatId, text, parse_mode: 'Markdown' }),
-    });
-  },
-};
-
-const aiService_full = {
-  async generateResponse(prompt) {
+const aiService = {
+  async generateResponse(userMessage, context) {
     const url = `https://generativelanguage.googleapis.com/v1beta/models/${config.geminiModel}:generateContent?key=${config.geminiApiKey}`;
+
+    const parteHistorico = context.historico || 'Sem histórico recente.';
+    const parteMemoria = context.memoria || 'Sem memória essencial.';
+    const parteEmpresas = context.empresas || 'Nenhuma empresa cadastrada.';
+    const partePerfil = context.perfil || 'Não definido.';
+    const parteDados = context.dados || 'Não definido.';
+    const parteSkills = context.skills || 'Nenhuma skill registrada.';
+    const parteData = context.agora || turndateBrasil();
+
+    const conteudo = [
+      `DATA E HORA: ${parteData}`,
+      `PERFIL DO CHEFE: ${partePerfil}`,
+      `DADOS PESSOAIS DO CHEFE: ${parteDados}`,
+      `EMPRESAS MONITORADAS: ${parteEmpresas}`,
+      `SKILLS DA CHARLENE: ${parteSkills}`,
+      `MEMÓRIA ESSENCIAL: ${parteMemoria}`,
+      `HISTÓRICO RECENTE DA CONVERSA:\n${parteHistorico}`,
+      `MENSAGEM DO CHEFE:\n${userMessage}`,
+    ].join('\n\n');
+
+    const body = {
+      systemInstruction: {
+        parts: [{ text: AI_SYSTEM_INSTRUCTION }],
+      },
+      contents: [
+        {
+          parts: [{ text: conteudo }],
+        },
+      ],
+      generationConfig: {
+        temperature: 0.5,
+        maxOutputTokens: 1000,
+      },
+    };
+
     try {
       const response = await fetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          contents: [{ parts: [{ text: prompt }] }],
-          generationConfig: { temperature: 0.7, maxOutputTokens: 400 },
-        }),
+        body: JSON.stringify(body),
       });
+
       const data = await response.json();
-      if (!data.candidates || !data.candidates[0]?.content.parts[0]?.text) {
+
+      if (!data.candidates || !data.candidates[0]?.content?.parts?.[0]?.text) {
         console.error('Resposta inesperada da API Gemini:', JSON.stringify(data, null, 2));
-        return 'Ops, minha conexão neural falhou. Pode repetir, por favor?';
+        return 'Chefe, minha conexão neural falhou por um instante. Pode repetir?';
       }
-      return data.candidates[0].content.parts[0].text;
+
+      return data.candidates[0].content.parts[0].text.trim();
     } catch (error) {
-      console.error('Erro ao chamar a API Gemini:', error);
-      return 'Estou com dificuldade para processar meu raciocínio agora. Tente novamente em um instante.';
+      console.error('Erro ao chamar a API Gemini:', error.message || error);
+      return 'Chefe, estou com dificuldade para processar meu raciocínio agora. Tente novamente em instantes.';
     }
   },
 };
 
-const databaseService_full = {
-  saveMessage: (userId, mensagem, tipo) => supabase.from('conversas_charlene').insert({ usuario_id: userId, mensagem, tipo }),
-  getRecentContext: async (userId, limit = 5) => {
-    const { data, error } = await supabase.from('conversas_charlene').select('mensagem, tipo').eq('usuario_id', userId).order('criado_em', { ascending: false }).limit(limit);
+// --- 5. SERVIÇO DE BANCO DE DADOS ---
+const databaseService = {
+  saveMessage: (userId, mensagem, tipo) =>
+    supabase.from('conversas_charlene').insert({
+      usuario_id: userId,
+      mensagem,
+      tipo,
+    }),
+
+  getRecentContext: async (userId, limit = 10) => {
+    const { data, error } = await supabase
+      .from('conversas_charlene')
+      .select('mensagem, tipo')
+      .eq('usuario_id', userId)
+      .order('criado_em', { ascending: false })
+      .limit(limit);
+
     if (error) console.error('DB Error (getRecentContext):', error.message);
     return data ? data.reverse() : [];
   },
-  getOpenTickets: async (limit = 3) => {
-    const { data, error } = await supabase.from('chamados').select('*').eq('status', 'aberto').order('criado_em', { ascending: true }).limit(limit);
+
+  getOpenTickets: async (limit = 20) => {
+    const { data, error } = await supabase
+      .from('chamados')
+      .select('*')
+      .eq('status', 'aberto')
+      .order('criado_em', { ascending: true })
+      .limit(limit);
+
     if (error) console.error('DB Error (getOpenTickets):', error.message);
     return data || [];
   },
-  getCompanies: async (limit = 5) => {
-    const { data, error } = await supabase.from('empresas').select('nome').order('criado_em', { ascending: false }).limit(limit);
+
+  getTicketById: async (id) => {
+    const { data, error } = await supabase
+      .from('chamados')
+      .select('*')
+      .eq('id', id)
+      .maybeSingle();
+
+    if (error) console.error('DB Error (getTicketById):', error.message);
+    return data || null;
+  },
+
+  closeTicket: async (id) => {
+    const { data, error } = await supabase
+      .from('chamados')
+      .update({ status: 'fechado' })
+      .eq('id', id);
+
+    if (error) {
+      console.error('DB Error (closeTicket):', error.message);
+      return false;
+    }
+    return true;
+  },
+
+  getCompanies: async (limit = 50) => {
+    const { data, error } = await supabase
+      .from('empresas')
+      .select('nome')
+      .order('criado_em', { ascending: false })
+      .limit(limit);
+
     if (error) console.error('DB Error (getCompanies):', error.message);
     return data || [];
   },
+
   getDailyPlan: async (userId) => {
-    const { data, error } = await supabase.from('plano_dia').select('conteudo').eq('usuario_id', userId).eq('data', new Date().toISOString().split('T')[0]).single();
-    if (error && error.code !== 'PGRST116') console.error('DB Error (getDailyPlan):', error.message);
+    const hoje = new Date().toISOString().split('T')[0];
+    const { data, error } = await supabase
+      .from('plano_dia')
+      .select('conteudo')
+      .eq('usuario_id', userId)
+      .eq('data', hoje)
+      .single();
+
+    if (error && error.code !== 'PGRST116') {
+      console.error('DB Error (getDailyPlan):', error.message);
+    }
     return data;
   },
-  getPendingIdeas: async (userId, limit = 3) => {
-    const { data, error } = await supabase.from('ideias_negocio').select('*').eq('usuario_id', userId).order('criado_em', { ascending: false }).limit(limit);
+
+  getPendingIdeas: async (userId, limit = 10) => {
+    const { data, error } = await supabase
+      .from('ideias_negocio')
+      .select('*')
+      .eq('usuario_id', userId)
+      .order('criado_em', { ascending: false })
+      .limit(limit);
+
     if (error) console.error('DB Error (getPendingIdeas):', error.message);
     return data || [];
   },
-  saveIdea: (userId, titulo) => supabase.from('ideias_negocio').insert({ usuario_id: userId, titulo, status: 'pendente' }),
+
+  saveIdea: (userId, titulo) =>
+    supabase.from('ideias_negocio').insert({
+      usuario_id: userId,
+      titulo,
+      status: 'pendente',
+    }),
+
   getCount: async (tableName) => {
-    const { count, error } = await supabase.from(tableName).select('*', { count: 'exact', head: true });
-    if (error) console.error(`DB Error (getCount ${tableName}):`, error.message);
+    const { count, error } = await supabase
+      .from(tableName)
+      .select('*', { count: 'exact', head: true });
+
+    if (error) {
+      console.error(`DB Error (getCount ${tableName}):`, error.message);
+      return 0;
+    }
     return count || 0;
+  },
+
+  getMemory: async (userId, limit = 10) => {
+    const { data, error } = await supabase
+      .from('memoria_charlene')
+      .select('tipo, conteudo, criado_em')
+      .eq('usuario_id', userId)
+      .order('criado_em', { ascending: false })
+      .limit(limit);
+
+    if (error) console.error('DB Error (getMemory):', error.message);
+    return data ? data.reverse() : [];
+  },
+
+  saveMemory: (userId, conteudo, tipo = 'nota') =>
+    supabase.from('memoria_charlene').insert({
+      usuario_id: userId,
+      conteudo,
+      tipo,
+    }),
+
+  getSkills: async () => {
+    const { data, error } = await supabase
+      .from('skills_charlene')
+      .select('nome, descricao, ativo')
+      .eq('ativo', true)
+      .order('nome', { ascending: true });
+
+    if (error) console.error('DB Error (getSkills):', error.message);
+    return data || [];
+  },
+
+  getPerfil: async (userId) => {
+    const { data, error } = await supabase
+      .from('perfil_usuario')
+      .select('conteudo')
+      .eq('usuario_id', userId)
+      .single();
+
+    if (error && error.code !== 'PGRST116') {
+      console.error('DB Error (getPerfil):', error.message);
+    }
+    return data?.conteudo || 'Não definido';
+  },
+
+  getDadosPessoais: async (userId) => {
+    const { data, error } = await supabase
+      .from('dados_usuario')
+      .select('conteudo')
+      .eq('usuario_id', userId)
+      .single();
+
+    if (error && error.code !== 'PGRST116') {
+      console.error('DB Error (getDadosPessoais):', error.message);
+    }
+    return data?.conteudo || 'Não definido';
+  },
+
+  logOoda: async (etapa, detalhe, userId = 'sistema', resultado = '') => {
+    try {
+      await supabase.from('eventos_ooda').insert({
+        usuario_id: userId,
+        etapa,
+        detalhe,
+        resultado,
+      });
+    } catch (error) {
+      console.error('DB Error (logOoda):', error.message || error);
+    }
   },
 };
 
-const commandHandlers_full = {
-  '/plano': async (chatId, userId) => { /* ...código do /plano... */ },
-  '/chamados': async (chatId) => { /* ...código do /chamados... */ },
-  '/empresas': async (chatId) => { /* ...código do /empresas... */ },
-  '/ideia': async (chatId, userId, args) => { /* ...código do /ideia... */ },
-  '/varredura': async (chatId, userId) => { /* ...código do /varredura... */ },
-  '/diagnostico': async (chatId) => { /* ...código do /diagnostico... */ },
-  'default': async (chatId) => { /* ...código do default... */ }
+// --- 6. HANDLERS DE COMANDOS ---
+const commandHandlers = {
+  '/start': async (chatId, userId) => {
+    await telegramService.sendMessage(
+      chatId,
+      '👋 Chefe, Charlene online.\n\n' +
+      'Comandos disponíveis:\n' +
+      '/plano — foco do dia\n' +
+      '/chamados — chamados abertos\n' +
+      '/empresas — empresas cadastradas\n' +
+      '/ideia [texto] — registrar ideia\n' +
+      '/varredura — status geral\n' +
+      '/diagnostico — diagnóstico do sistema\n' +
+      '/fechar [número ou id] — fechar chamado\n' +
+      '/lembrar [texto] — salvar memória\n' +
+      '/memorias — ver memórias\n' +
+      '/skills — ver skills\n' +
+      '/ajuda — esta lista'
+    );
+  },
+
+  '/ajuda': async (chatId) => {
+    await commandHandlers['/start'](chatId, null);
+  },
+
+  '/plano': async (chatId, userId) => {
+    const plano = await databaseService.getDailyPlan(userId);
+
+    if (plano?.conteudo) {
+      await telegramService.sendMessage(
+        chatId,
+        `🎯 Foco de hoje:\n\n${plano.conteudo}\n\nBora fazer o primeiro micro-passo, Chefe?`
+      );
+    } else {
+      await telegramService.sendMessage(
+        chatId,
+        'Ainda não temos foco de hoje, Chefe.\nQual é a UMA coisa que, se feita hoje, o dia já foi bom?'
+      );
+    }
+  },
+
+  '/chamados': async (chatId) => {
+    const chamados = await databaseService.getOpenTickets(20);
+
+    if (chamados.length === 0) {
+      await telegramService.sendMessage(
+        chatId,
+        '🎉 Nenhum chamado aberto, Chefe. Frente limpa.\nO que a gente ataca agora?'
+      );
+      return;
+    }
+
+    const lista = chamados
+      .map((c, i) => {
+        const descricao = c.descricao
+          ? c.descricao.substring(0, 50)
+          : 'Sem descrição';
+        const empresa = c.empresa_nome || 'Sem empresa';
+        return `${i + 1}. [ID ${c.id}] ${empresa} — ${descricao}`;
+      })
+      .join('\n');
+
+    await telegramService.sendMessage(
+      chatId,
+      `📋 Chamados abertos (${chamados.length}):\n\n${lista}\n\nPara fechar: /fechar 1 (ou /fechar ID)`
+    );
+  },
+
+  '/empresas': async (chatId) => {
+    const empresas = await databaseService.getCompanies(50);
+
+    if (empresas.length === 0) {
+      await telegramService.sendMessage(
+        chatId,
+        'Nenhuma empresa cadastrada ainda, Chefe.\nQuer cadastrar a primeira?'
+      );
+      return;
+    }
+
+    const lista = empresas.map((e, i) => `${i + 1}. ${e.nome}`).join('\n');
+    await telegramService.sendMessage(chatId, `🏢 Empresas cadastradas:\n\n${lista}`);
+  },
+
+  '/ideia': async (chatId, userId, args) => {
+    if (!args) {
+      await telegramService.sendMessage(
+        chatId,
+        'Qual é a ideia, Chefe?\nExemplo: /ideia criar um painel de metas'
+      );
+      return;
+    }
+
+    const { error } = await databaseService.saveIdea(userId, args);
+
+    if (!error) {
+      await telegramService.sendMessage(
+        chatId,
+        `💡 Ideia registrada: "${args}"\nQuer que eu quebre em micro-passos?`
+      );
+    } else {
+      console.error('DB Error (saveIdea):', error.message);
+      await telegramService.sendMessage(
+        chatId,
+        'Chefe, tive um erro ao salvar a ideia. Pode repetir?'
+      );
+    }
+  },
+
+  '/fechar': async (chatId, args) => {
+    if (!args) {
+      await telegramService.sendMessage(
+        chatId,
+        'Chefe, uso: /fechar [número da lista] ou /fechar [ID]\nExemplo: /fechar 1'
+      );
+      return;
+    }
+
+    const chamadosAbertos = await databaseService.getOpenTickets(50);
+
+    if (chamadosAbertos.length === 0) {
+      await telegramService.sendMessage(chatId, 'Não há chamados abertos, Chefe.');
+      return;
+    }
+
+    const numero = Number(args);
+    let alvo = null;
+
+    if (Number.isInteger(numero) && numero >= 1 && numero <= chamadosAbertos.length) {
+      alvo = chamadosAbertos[numero - 1];
+    } else {
+      alvo = await databaseService.getTicketById(args);
+    }
+
+    if (!alvo) {
+      await telegramService.sendMessage(
+        chatId,
+        'Chefe, não encontrei esse chamado.\nUse /chamados para ver a lista.'
+      );
+      return;
+    }
+
+    const sucesso = await databaseService.closeTicket(alvo.id);
+
+    if (sucesso) {
+      const descricao = alvo.descricao ? alvo.descricao.substring(0, 50) : 'Sem descrição';
+      await telegramService.sendMessage(
+        chatId,
+        `✅ Chamado ${alvo.id} fechado.\nDetalhe: ${descricao}`
+      );
+      await databaseService.logOoda('acao', `Fechar chamado ${alvo.id}`, chatId.toString(), 'sucesso');
+    } else {
+      await telegramService.sendMessage(
+        chatId,
+        '❌ Erro ao fechar o chamado, Chefe. Verifiquei e registrei o problema.'
+      );
+    }
+  },
+
+  '/lembrar': async (chatId, userId, args) => {
+    if (!args) {
+      await telegramService.sendMessage(
+        chatId,
+        'Chefe, o que devo lembrar?\nExemplo: /lembrar toda segunda revisar chamados'
+      );
+      return;
+    }
+
+    const { error } = await databaseService.saveMemory(userId, args, 'nota');
+
+    if (!error) {
+      await telegramService.sendMessage(
+        chatId,
+        `🧠 Memorizado: "${args}"\nEstá na minha memória essencial, Chefe.`
+      );
+    } else {
+      console.error('DB Error (saveMemory):', error.message);
+      await telegramService.sendMessage(
+        chatId,
+        'Chefe, não consegui salvar essa memória. A tabela pode não existir ainda.'
+      );
+    }
+  },
+
+  '/memorias': async (chatId, userId) => {
+    const memorias = await databaseService.getMemory(userId, 10);
+
+    if (memorias.length === 0) {
+      await telegramService.sendMessage(
+        chatId,
+        'Ainda não tenho memórias salvas, Chefe.\nUse /lembrar para registrar algo importante.'
+      );
+      return;
+    }
+
+    const lista = memorias
+      .map((m) => `• [${m.tipo}] ${m.conteudo}`)
+      .join('\n');
+
+    await telegramService.sendMessage(chatId, `🧠 Memória essencial:\n\n${lista}`);
+  },
+
+  '/skills': async (chatId) => {
+    const skills = await databaseService.getSkills();
+
+    if (skills.length === 0) {
+      await telegramService.sendMessage(
+        chatId,
+        'Nenhuma skill dinâmica registrada ainda, Chefe.\nAs skills atuais são os comandos do código.'
+      );
+      return;
+    }
+
+    const lista = skills
+      .map((s) => `• ${s.nome} — ${s.descricao || 'Sem descrição'}`)
+      .join('\n');
+
+    await telegramService.sendMessage(chatId, `🛠️ Skills ativas:\n\n${lista}`);
+  },
+
+  '/varredura': async (chatId, userId) => {
+    const [chamados, ideias, numEmpresas, numMemorias, numSkills] = await Promise.all([
+      databaseService.getOpenTickets(50),
+      databaseService.getPendingIdeas(userId, 10),
+      databaseService.getCount('empresas'),
+      safeQuery(() => databaseService.getCount('memoria_charlene'), 0),
+      safeQuery(() => databaseService.getCount('skills_charlene'), 0),
+    ]);
+
+    await telegramService.sendMessage(
+      chatId,
+      '🔍 Varredura do sistema:\n\n' +
+      `• Chamados abertos: ${chamados.length}\n` +
+      `• Ideias pendentes: ${ideias.length}\n` +
+      `• Empresas cadastradas: ${numEmpresas}\n` +
+      `• Memórias salvas: ${numMemorias}\n` +
+      `• Skills ativas: ${numSkills}\n\n` +
+      'O que você quer atacar primeiro, Chefe?'
+    );
+  },
+
+  '/diagnostico': async (chatId) => {
+    const tables = [
+      'chamados',
+      'empresas',
+      'equipamentos',
+      'orcamentos',
+      'ideias_negocio',
+      'tarefas_pessoais',
+    ];
+
+    const counts = await Promise.all(
+      tables.map((table) => safeQuery(() => databaseService.getCount(table), 'ERRO'))
+    );
+
+    const linhas = tables
+      .map((table, i) => `• ${table}: ${counts[i]}`)
+      .join('\n');
+
+    await telegramService.sendMessage(
+      chatId,
+      `🩺 Diagnóstico do sistema:\n\n${linhas}\n\nTudo certo por aqui, Chefe. Qual é a próxima missão?`
+    );
+  },
+
+  default: async (chatId) => {
+    await telegramService.sendMessage(
+      chatId,
+      'Comando não reconhecido, Chefe.\nUse /ajuda para ver os comandos disponíveis.'
+    );
+  },
 };
 
-// Re-colando os handlers completos para segurança
-commandHandlers_full['/plano'] = async (chatId, userId) => {
-    const plano = await databaseService_full.getDailyPlan(userId);
-    await telegramService_full.sendMessage(chatId, plano?.conteudo ? `🎯 Foco de hoje:\n\n${plano.conteudo}\n\nBora fazer o primeiro micro-passo?` : `Ainda não temos foco de hoje. Qual é a UMA coisa que, se feita hoje, o dia foi bom?`);
-};
-commandHandlers_full['/chamados'] = async (chatId) => {
-    const chamados = await databaseService_full.getOpenTickets(3);
-    await telegramService_full.sendMessage(chatId, (chamados.length > 0) ? `📋 Chamados abertos:\n\n${chamados.map((c, i) => `${i + 1}. ${c.empresa_nome} - ${c.descricao.substring(0, 40)}...`).join('\n')}\n\nQual a gente pega primeiro?` : `🎉 Nenhum chamado aberto. Limpo. O que a gente ataca agora?`);
-};
-commandHandlers_full['/empresas'] = async (chatId) => {
-    const empresas = await databaseService_full.getCompanies(5);
-    await telegramService_full.sendMessage(chatId, (empresas.length > 0) ? `🏢 Empresas cadastradas:\n\n${empresas.map((e, i) => `${i + 1}. ${e.nome}`).join('\n')}` : `Nenhuma empresa cadastrada ainda. Quer cadastrar a primeira?`);
-};
-commandHandlers_full['/ideia'] = async (chatId, userId, args) => {
-    if (!args) return await telegramService_full.sendMessage(chatId, `Qual é a ideia? Me manda em uma frase.`);
-    const { error } = await databaseService_full.saveIdea(userId, args);
-    await telegramService_full.sendMessage(chatId, !error ? `💡 Ideia registrada: "${args}". Quer que eu quebre em micro-passos?` : `Deu erro ao salvar a ideia. Pode repetir?`);
-};
-commandHandlers_full['/varredura'] = async (chatId, userId) => {
-    const [chamados, ideias, numEmpresas] = await Promise.all([databaseService_full.getOpenTickets(10), databaseService_full.getPendingIdeas(userId, 10), databaseService_full.getCount('empresas')]);
-    await telegramService_full.sendMessage(chatId, `🔍 Varredura do sistema:\n\n• Chamados abertos: ${chamados.length}\n• Ideias pendentes: ${ideias.length}\n• Empresas cadastradas: ${numEmpresas}\n\nO que você quer atacar primeiro?`);
-};
-commandHandlers_full['/diagnostico'] = async (chatId) => {
-    const tables = ['chamados', 'empresas', 'equipamentos', 'orcamentos', 'ideias_negocio', 'tarefas_pessoais'];
-    const counts = await Promise.all(tables.map(table => databaseService_full.getCount(table)));
-    let msg = `🩺 Diagnóstico do sistema:\n\n${tables.map((table, i) => `• ${table}: ${counts[i]}`).join('\n')}\n\nTudo certo por aqui. Qual é a próxima missão?`;
-    await telegramService_full.sendMessage(chatId, msg);
-};
-commandHandlers_full['default'] = async (chatId) => {
-    const availableCommands = Object.keys(commandHandlers_full).filter(c => c !== 'default').join(', ');
-    await telegramService_full.sendMessage(chatId, `Comando não reconhecido. Use: ${availableCommands}. Qual desses você quer?`);
-};
-
-
+// --- 7. HANDLER PRINCIPAL ---
 module.exports = async function handler(req, res) {
-  if (req.method !== 'POST') return res.status(200).json({ ok: true, message: 'Charlene online.' });
+  if (req.method !== 'POST') {
+    return res.status(200).json({ ok: true, message: 'Charlene v4.0 online.' });
+  }
+
   const update = req.body;
   const message = update.message || update.edited_message;
-  if (!message || (!message.text && !message.caption)) return res.status(200).json({ ok: true });
-  
+
+  if (!message || (!message.text && !message.caption)) {
+    return res.status(200).json({ ok: true });
+  }
+
   const chatId = message.chat.id;
-  const text = message.text || message.caption;
+  const text = (message.text || message.caption).trim();
   const userId = message.from.id.toString();
 
   try {
-    await databaseService_full.saveMessage(userId, text, 'usuario');
-    const [command, ...argsArray] = text.split(' ');
-    const args = argsArray.join(' ');
+    await databaseService.saveMessage(userId, text, 'usuario');
+    await databaseService.logOoda('observar', `Mensagem: ${text.slice(0, 100)}`, userId);
+
+    const command = text.split(' ')[0].toLowerCase();
+    const args = text.length > command.length ? text.slice(command.length).trim() : '';
 
     if (text.startsWith('/')) {
-      const commandFunction = commandHandlers_full[command] || commandHandlers_full.default;
+      const commandFunction = commandHandlers[command] || commandHandlers.default;
       await commandFunction(chatId, userId, args);
+      await databaseService.logOoda('agir', `Comando: ${command}`, userId, 'executado');
     } else {
-      const promptTemplate = promptBuilder.getPromptTemplate();
-      const [contexto, empresas, perfil] = await Promise.all([
-        databaseService_full.getRecentContext(userId),
-        databaseService_full.getCompanies(20),
-        // TODO: Implementar a busca de `perfil_usuario`
+      await telegramService.sendChatAction(chatId, 'typing');
+
+      const [contexto, empresas, perfil, dadosPessoais, memorias, skills] = await Promise.all([
+        databaseService.getRecentContext(userId, 10),
+        databaseService.getCompanies(30),
+        safeQuery(() => databaseService.getPerfil(userId), 'Não definido'),
+        safeQuery(() => databaseService.getDadosPessoais(userId), 'Não definido'),
+        safeQuery(() => databaseService.getMemory(userId, 10), []),
+        safeQuery(() => databaseService.getSkills(), []),
       ]);
 
-      const promptData = {
-        mensagem_usuario: text,
-        historico_conversa: contexto.map(c => `[${c.tipo}] ${c.mensagem}`).join('\n'),
-        lista_empresas: empresas.length > 0 ? empresas.map(e => e.nome).join(', ') : 'Nenhuma empresa cadastrada.',
-        perfil_usuario: perfil || 'Não definido',
-        dados_pessoais_usuario: 'Não definido',
-        comandos_disponiveis: Object.keys(commandHandlers_full).filter(c => c !== 'default').join(', '),
-        modulo_fe_ativo: 'false',
+      const historicoFormatado = contexto
+        .map((c) => `[${c.tipo === 'usuario' ? 'Chefe' : 'Charlene'}] ${c.mensagem}`)
+        .join('\n');
+
+      const memoriaFormatada = memorias
+        .map((m) => `• [${m.tipo}] ${m.conteudo}`)
+        .join('\n');
+
+      const skillsFormatada = skills
+        .map((s) => `• ${s.nome} — ${s.descricao || 'Sem descrição'}`)
+        .join('\n');
+
+      const context = {
+        historico: historicoFormatado || 'Sem histórico recente.',
+        memoria: memoriaFormatada || 'Sem memória essencial.',
+        empresas: empresas.map((e) => e.nome).join(', '),
+        perfil: perfil || 'Não definido',
+        dados: dadosPessoais || 'Não definido',
+        skills: skillsFormatada || 'Nenhuma skill registrada.',
+        agora: turndateBrasil(),
       };
 
-      const finalPrompt = promptBuilder.build(promptTemplate, promptData);
-      const resposta = await aiService_full.generateResponse(finalPrompt);
+      const resposta = await aiService.generateResponse(text, context);
 
-      await databaseService_full.saveMessage(userId, resposta, 'charlene');
-      await telegramService_full.sendMessage(chatId, resposta);
+      await databaseService.saveMessage(userId, resposta, 'charlene');
+      await telegramService.sendMessage(chatId, resposta);
+      await databaseService.logOoda('avaliar', `Resposta IA para: ${text.slice(0, 100)}`, userId, 'resposta enviada');
     }
+
     return res.status(200).json({ ok: true });
   } catch (error) {
     console.error('Erro fatal no handler:', error);
-    await telegramService_full.sendMessage(chatId, `Ops, tive um problema interno sério. Já registrei o erro para análise. Por favor, tente de novo.`);
+    await telegramService.sendMessage(
+      chatId,
+      'Chefe, tive um problema interno sério. Já registrei o erro para diagnóstico. Tente de novo em instantes.'
+    );
+    await databaseService.logOoda('avaliar', 'Erro fatal no handler', userId, error.message || String(error));
     return res.status(200).json({ ok: true });
   }
 };
