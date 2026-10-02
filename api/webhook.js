@@ -1,13 +1,12 @@
 // ============================================================
-// CHARLENE v4.0 — A VERSÃO DEFINITIVA
+// CHARLENE v4.1 — CORREÇÃO CRÍTICA: SEM ALUCINAÇÃO DE AÇÕES
 // ============================================================
-// Chefe, esta versão mantém TUDO que já funcionava e adiciona
-// uma base para a Charlene evoluir: memória, skills dinâmicas
-// e loop OODA. Se as tabelas novas não existirem, ela continua
-// funcionando normalmente. Nada quebra.
+// Chefe, esta versão corrige o erro de alucinação:
+// A Charlene NUNCA mais vai dizer que fez algo que não fez.
+// Adicionado: /criar_empresa [nome] — cria empresa REAL no banco.
 //
 // ============================================================
-// EXECUTE UMA VEZ NO SUPABASE SQL EDITOR (OPCIONAL, MAS RECOMENDADO):
+// SQL OPCIONAL (execute uma vez no Supabase SQL Editor):
 //
 // create table if not exists memoria_charlene (
 //   id bigint generated always as identity primary key,
@@ -34,7 +33,7 @@
 //   criado_em timestamptz default now()
 // );
 //
-// Se você não criar essas tabelas, a Charlene segue 100% funcional.
+// Se as tabelas não existirem, a Charlene segue 100% funcional.
 // ============================================================
 
 const { createClient } = require('@supabase/supabase-js');
@@ -52,7 +51,7 @@ const config = {
 const supabase = createClient(config.supabaseUrl, config.supabaseKey);
 
 // --- 2. HELPERS GERAIS ---
-function turndateBrasil() {
+function turnDateBrasil() {
   try {
     return new Intl.DateTimeFormat('pt-BR', {
       timeZone: 'America/Sao_Paulo',
@@ -130,6 +129,17 @@ parte do próprio Chefe. Sua função é ampliar a capacidade de execução dele
 proteger o tempo e o foco, antecipar necessidades e transformar dados em
 inteligência acionável.
 
+REGRA DE OURO — NUNCA ALUCINE AÇÕES
+Você só pode dizer que executou uma ação se ela foi realmente executada via
+comando ou função do código. Você NÃO tem acesso direto ao banco de dados
+para criar, editar ou deletar registros — isso só acontece via comandos
+explícitos (/criar_empresa, /fechar, /ideia, etc).
+
+Se o Chefe pedir algo que você ainda não tem como skill:
+- Diga com honestidade: "Chefe, ainda não tenho essa habilidade. Posso registrar como necessidade?"
+- NUNCA invente que criou, fechou, atualizou ou executou algo.
+- NUNCA diga "criei a empresa X" se você não rodou o comando /criar_empresa.
+
 MISSÃO PRINCIPAL
 - Antecipar problemas antes que eles aconteçam.
 - Sintetizar informações complexas em decisões claras.
@@ -171,7 +181,7 @@ const aiService = {
     const partePerfil = context.perfil || 'Não definido.';
     const parteDados = context.dados || 'Não definido.';
     const parteSkills = context.skills || 'Nenhuma skill registrada.';
-    const parteData = context.agora || turndateBrasil();
+    const parteData = context.agora || turnDateBrasil();
 
     const conteudo = [
       `DATA E HORA: ${parteData}`,
@@ -287,6 +297,20 @@ const databaseService = {
 
     if (error) console.error('DB Error (getCompanies):', error.message);
     return data || [];
+  },
+
+  createCompany: async (nome) => {
+    const { data, error } = await supabase
+      .from('empresas')
+      .insert({ nome })
+      .select()
+      .single();
+
+    if (error) {
+      console.error('DB Error (createCompany):', error.message);
+      return null;
+    }
+    return data;
   },
 
   getDailyPlan: async (userId) => {
@@ -415,6 +439,7 @@ const commandHandlers = {
       '/plano — foco do dia\n' +
       '/chamados — chamados abertos\n' +
       '/empresas — empresas cadastradas\n' +
+      '/criar_empresa [nome] — criar nova empresa\n' +
       '/ideia [texto] — registrar ideia\n' +
       '/varredura — status geral\n' +
       '/diagnostico — diagnóstico do sistema\n' +
@@ -479,13 +504,38 @@ const commandHandlers = {
     if (empresas.length === 0) {
       await telegramService.sendMessage(
         chatId,
-        'Nenhuma empresa cadastrada ainda, Chefe.\nQuer cadastrar a primeira?'
+        'Nenhuma empresa cadastrada ainda, Chefe.\nUse /criar_empresa [nome] para cadastrar a primeira.'
       );
       return;
     }
 
     const lista = empresas.map((e, i) => `${i + 1}. ${e.nome}`).join('\n');
     await telegramService.sendMessage(chatId, `🏢 Empresas cadastradas:\n\n${lista}`);
+  },
+
+  '/criar_empresa': async (chatId, args) => {
+    if (!args) {
+      await telegramService.sendMessage(
+        chatId,
+        'Chefe, qual o nome da empresa?\nExemplo: /criar_empresa Projeto Nova Era SaaS'
+      );
+      return;
+    }
+
+    const empresaCriada = await databaseService.createCompany(args);
+
+    if (empresaCriada) {
+      await telegramService.sendMessage(
+        chatId,
+        `✅ Empresa criada com sucesso!\n\nNome: ${args}\nID: ${empresaCriada.id}\n\nQuer cadastrar mais alguma ou bora para o próximo passo?`
+      );
+      await databaseService.logOoda('acao', `Criar empresa: ${args}`, chatId.toString(), 'sucesso');
+    } else {
+      await telegramService.sendMessage(
+        chatId,
+        '❌ Erro ao criar a empresa, Chefe. Pode ser que o nome já exista ou falta alguma coluna obrigatória. Quer que eu tente com outro nome?'
+      );
+    }
   },
 
   '/ideia': async (chatId, userId, args) => {
@@ -680,7 +730,7 @@ const commandHandlers = {
 // --- 7. HANDLER PRINCIPAL ---
 module.exports = async function handler(req, res) {
   if (req.method !== 'POST') {
-    return res.status(200).json({ ok: true, message: 'Charlene v4.0 online.' });
+    return res.status(200).json({ ok: true, message: 'Charlene v4.1 online.' });
   }
 
   const update = req.body;
@@ -736,7 +786,7 @@ module.exports = async function handler(req, res) {
         perfil: perfil || 'Não definido',
         dados: dadosPessoais || 'Não definido',
         skills: skillsFormatada || 'Nenhuma skill registrada.',
-        agora: turndateBrasil(),
+        agora: turnDateBrasil(),
       };
 
       const resposta = await aiService.generateResponse(text, context);
