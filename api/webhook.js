@@ -1,17 +1,13 @@
 // ============================================================
-// CHARLENE v6.0 — SKILLS DINÂMICAS + APRENDIZADO AUTÔNOMO
+// CHARLENE v6.1 — AJUSTE PARA TABELA chamados REAL
 // ============================================================
-// Agora a Charlene:
-// 1. Lê skills do banco e executa sem precisar de código novo
-// 2. Identifica o que não sabe e registra automaticamente
-// 3. Aprende padrões e aplica em situações similares
-// 4. Você só intervém quando ela pede algo muito específico
+// Correção: a tabela exige equipamento_nome e data_criacao
+// como obrigatórios. Agora o createTicket envia tudo.
 // ============================================================
 
 const { createClient } = require('@supabase/supabase-js');
 const fetch = require('node-fetch');
 
-// --- 1. CONFIGURAÇÃO ---
 const config = {
   telegramToken: process.env.TELEGRAM_BOT_TOKEN,
   geminiApiKey: process.env.GEMINI_API_KEY,
@@ -22,7 +18,7 @@ const config = {
 
 const supabase = createClient(config.supabaseUrl, config.supabaseKey);
 
-// --- 2. HELPERS ---
+// --- HELPERS ---
 function turnDateBrasil() {
   try {
     return new Intl.DateTimeFormat('pt-BR', {
@@ -33,6 +29,11 @@ function turnDateBrasil() {
   } catch (_) {
     return new Date().toISOString();
   }
+}
+
+function dataCriacaoFormatada() {
+  const d = new Date();
+  return d.toLocaleDateString('pt-BR', { timeZone: 'America/Sao_Paulo' });
 }
 
 function splitLongText(text, max = 3900) {
@@ -50,15 +51,11 @@ function splitLongText(text, max = 3900) {
 }
 
 async function safeQuery(fn, fallback = null) {
-  try {
-    return await fn();
-  } catch (error) {
-    console.error('safeQuery error:', error.message || error);
-    return fallback;
-  }
+  try { return await fn(); }
+  catch (error) { console.error('safeQuery error:', error.message || error); return fallback; }
 }
 
-// --- 3. TELEGRAM ---
+// --- TELEGRAM ---
 const telegramService = {
   async sendMessage(chatId, text) {
     const mensagens = splitLongText(text);
@@ -89,7 +86,7 @@ const telegramService = {
   },
 };
 
-// --- 4. BANCO DE DADOS ---
+// --- BANCO ---
 const databaseService = {
   saveMessage: (userId, mensagem, tipo) =>
     supabase.from('conversas_charlene').insert({ usuario_id: userId, mensagem, tipo }),
@@ -140,12 +137,26 @@ const databaseService = {
     return data;
   },
 
-  createTicket: async (empresa_nome, descricao, status = 'aberto', tipo = 'geral') => {
+  // AJUSTADO: envia todos os campos obrigatórios da tabela chamados
+  createTicket: async ({ empresa_nome, equipamento_nome, descricao, tipo, solicitante, prioridade }) => {
+    const payload = {
+      empresa_nome: empresa_nome || 'Não informada',
+      equipamento_nome: equipamento_nome || 'Não informado',
+      descricao: descricao || '',
+      data_criacao: dataCriacaoFormatada(),
+      status: 'aberto',
+    };
+
+    if (tipo) payload.tipo = tipo;
+    if (solicitante) payload.solicitante = solicitante;
+    if (prioridade) payload.prioridade = prioridade;
+
     const { data, error } = await supabase
       .from('chamados')
-      .insert({ empresa_nome, descricao, status, tipo })
+      .insert(payload)
       .select()
       .single();
+
     if (error) {
       console.error('DB Error (createTicket):', error.message);
       return null;
@@ -249,7 +260,6 @@ const databaseService = {
     return data;
   },
 
-  // NOVO: skills dinâmicas
   getSkills: async () => {
     const { data, error } = await supabase
       .from('skills_charlene')
@@ -258,19 +268,6 @@ const databaseService = {
       .order('nome', { ascending: true });
     if (error) console.error('DB Error (getSkills):', error.message);
     return data || [];
-  },
-
-  addSkill: async (nome, categoria, descricao, gatilhos, conhecimento) => {
-    const { data, error } = await supabase
-      .from('skills_charlene')
-      .insert({ nome, categoria, descricao, gatilhos, conhecimento, ativo: true })
-      .select()
-      .single();
-    if (error) {
-      console.error('DB Error (addSkill):', error.message);
-      return null;
-    }
-    return data;
   },
 
   getPerfil: async (userId) => {
@@ -348,8 +345,8 @@ const databaseService = {
   },
 };
 
-// --- 5. FERRAMENTAS BASE (sempre disponíveis) ---
-const TOOLS_BASE = [
+// --- FERRAMENTAS ---
+const TOOLS = [
   {
     name: 'mapear_sistema',
     description: 'Faz uma varredura completa do sistema.',
@@ -362,24 +359,26 @@ const TOOLS_BASE = [
   },
   {
     name: 'criar_chamado',
-    description: 'Abre um novo chamado.',
+    description: 'Abre um novo chamado no sistema. Preenche empresa, equipamento e descrição.',
     parameters: {
       type: 'object',
       properties: {
-        empresa_nome: { type: 'string', description: 'Nome da empresa' },
-        descricao: { type: 'string', description: 'Descrição do chamado' },
-        tipo: { type: 'string', description: 'Tipo (teste, suporte, bug, melhoria)' },
+        empresa_nome: { type: 'string', description: 'Nome da empresa relacionada' },
+        equipamento_nome: { type: 'string', description: 'Equipamento ou área afetada (ex: "Sistema Charlene", "Leitor", "Cadeira")' },
+        descricao: { type: 'string', description: 'Descrição detalhada do chamado' },
+        solicitante: { type: 'string', description: 'Nome de quem está solicitando' },
+        prioridade: { type: 'string', description: 'Prioridade (baixa, normal, alta, urgente)' },
       },
-      required: ['empresa_nome', 'descricao'],
+      required: ['empresa_nome', 'equipamento_nome', 'descricao'],
     },
   },
   {
     name: 'fechar_chamado',
-    description: 'Fecha um chamado pelo ID ou número.',
+    description: 'Fecha um chamado pelo ID ou número da lista.',
     parameters: {
       type: 'object',
       properties: {
-        id_ou_numero: { type: 'string', description: 'ID ou número da lista' },
+        id_ou_numero: { type: 'string', description: 'ID do chamado ou número da lista' },
       },
       required: ['id_ou_numero'],
     },
@@ -456,7 +455,7 @@ const TOOLS_BASE = [
   },
 ];
 
-// --- 6. EXECUTOR ---
+// --- EXECUTOR ---
 async function executarFuncao(nome, args, userId) {
   console.log(`[EXECUTAR] ${nome}(${JSON.stringify(args || {})})`);
 
@@ -472,35 +471,49 @@ async function executarFuncao(nome, args, userId) {
       ]);
 
       return [
-        'MAPEAMENTO:',
-        `• Chamados: ${chamados.length}`,
+        'MAPEAMENTO DO SISTEMA:',
+        `• Chamados abertos: ${chamados.length}`,
         `• Empresas: ${empresas.length}`,
         `• Ideias: ${ideias.length}`,
         `• Memórias: ${memorias.length}`,
-        `• Skills: ${skills.length}`,
-        `• Necessidades: ${necessidades.length}`,
+        `• Skills ativas: ${skills.length}`,
+        `• Necessidades de evolução: ${necessidades.length}`,
       ].join('\n');
     }
 
     case 'listar_chamados': {
       const chamados = await databaseService.getOpenTickets(20);
       if (chamados.length === 0) return 'Nenhum chamado aberto.';
-      return `Chamados (${chamados.length}):\n${chamados
-        .map((c, i) => `${i + 1}. [ID ${c.id}] ${c.empresa_nome || '?'} — ${c.descricao || '?'}`)
+      return `Chamados abertos (${chamados.length}):\n${chamados
+        .map((c, i) => `${i + 1}. [ID ${c.id}] ${c.empresa_nome} — ${c.equipamento_nome} — ${c.descricao?.substring(0, 50) || '?'}`)
         .join('\n')}`;
     }
 
+    // AJUSTADO: envia os 3 campos obrigatórios
     case 'criar_chamado': {
       const empresa_nome = args?.empresa_nome || '';
+      const equipamento_nome = args?.equipamento_nome || 'Sistema Charlene';
       const descricao = args?.descricao || '';
-      const tipo = args?.tipo || 'geral';
-      if (!empresa_nome || !descricao) return 'Faltam dados do chamado.';
-      const chamado = await databaseService.createTicket(empresa_nome, descricao, 'aberto', tipo);
+      const solicitante = args?.solicitante || 'Charlene';
+      const prioridade = args?.prioridade || 'normal';
+
+      if (!empresa_nome) return 'Preciso do nome da empresa.';
+      if (!descricao) return 'Preciso da descrição do chamado.';
+
+      const chamado = await databaseService.createTicket({
+        empresa_nome,
+        equipamento_nome,
+        descricao,
+        tipo: 'geral',
+        solicitante,
+        prioridade,
+      });
+
       if (chamado) {
         await databaseService.logOoda('acao', `Criar chamado: ${descricao}`, userId, 'sucesso');
-        return `Chamado aberto! ID: ${chamado.id}`;
+        return `✅ Chamado aberto com sucesso!\n• ID: ${chamado.id}\n• Empresa: ${empresa_nome}\n• Equipamento: ${equipamento_nome}\n• Descrição: ${descricao}\n• Prioridade: ${prioridade}`;
       }
-      return 'Erro ao criar chamado.';
+      return ' Erro ao criar o chamado. Verifique se a tabela chamados está acessível.';
     }
 
     case 'fechar_chamado': {
@@ -519,14 +532,14 @@ async function executarFuncao(nome, args, userId) {
       const resultado = await databaseService.closeTicket(alvo.id);
       if (resultado) {
         await databaseService.logOoda('acao', `Fechar chamado ${alvo.id}`, userId, 'sucesso');
-        return `Chamado ${alvo.id} fechado.`;
+        return `✅ Chamado ${alvo.id} fechado.`;
       }
-      return `Erro ao fechar chamado ${alvo.id}.`;
+      return ` Erro ao fechar chamado ${alvo.id}.`;
     }
 
     case 'listar_empresas': {
       const empresas = await databaseService.getCompanies(50);
-      if (empresas.length === 0) return 'Nenhuma empresa.';
+      if (empresas.length === 0) return 'Nenhuma empresa cadastrada.';
       return `Empresas:\n${empresas.map((e, i) => `${i + 1}. ${e.nome}`).join('\n')}`;
     }
 
@@ -536,49 +549,49 @@ async function executarFuncao(nome, args, userId) {
       const empresa = await databaseService.createCompany(nome);
       if (empresa) {
         await databaseService.logOoda('acao', `Criar empresa: ${nome}`, userId, 'sucesso');
-        return `Empresa "${nome}" criada. ID: ${empresa.id}`;
+        return `✅ Empresa "${nome}" criada. ID: ${empresa.id}`;
       }
-      return `Erro ao criar "${nome}".`;
+      return `❌ Erro ao criar "${nome}".`;
     }
 
     case 'mostrar_plano_dia': {
       const plano = await databaseService.getDailyPlan(userId);
       if (plano?.conteudo) return `Plano de hoje:\n${plano.conteudo}`;
-      return 'Sem plano definido.';
+      return 'Sem plano definido para hoje.';
     }
 
     case 'listar_ideias': {
       const ideias = await databaseService.getPendingIdeas(userId, 10);
-      if (ideias.length === 0) return 'Nenhuma ideia.';
-      return `Ideias:\n${ideias.map((i, idx) => `${idx + 1}. ${i.titulo}`).join('\n')}`;
+      if (ideias.length === 0) return 'Nenhuma ideia registrada.';
+      return `Ideias pendentes:\n${ideias.map((i, idx) => `${idx + 1}. ${i.titulo}`).join('\n')}`;
     }
 
     case 'salvar_ideia': {
       const titulo = args?.titulo || '';
       if (!titulo) return 'Título não informado.';
       const ideia = await databaseService.saveIdea(userId, titulo);
-      if (ideia) return `Ideia salva: "${titulo}"`;
-      return 'Erro ao salvar ideia.';
+      if (ideia) return `✅ Ideia salva: "${titulo}"`;
+      return ' Erro ao salvar ideia.';
     }
 
     case 'salvar_memoria': {
       const conteudo = args?.conteudo || '';
       if (!conteudo) return 'Conteúdo não informado.';
       const memoria = await databaseService.saveMemory(userId, conteudo, 'nota');
-      if (memoria) return `Memorizado: "${conteudo}"`;
-      return 'Erro ao salvar memória.';
+      if (memoria) return `✅ Memorizado: "${conteudo}"`;
+      return '❌ Erro ao salvar memória.';
     }
 
     case 'ver_memorias': {
       const memorias = await databaseService.getMemory(userId, 10);
-      if (memorias.length === 0) return 'Sem memórias.';
+      if (memorias.length === 0) return 'Sem memórias salvas.';
       return `Memórias:\n${memorias.map((m) => `• ${m.conteudo}`).join('\n')}`;
     }
 
     case 'listar_necessidades': {
       const necessidades = await databaseService.listarNecessidades(userId, 20);
       if (necessidades.length === 0) return 'Sem necessidades registradas.';
-      return `Necessidades:\n${necessidades.map((n, i) => `${i + 1}. [${n.status}] ${n.pedido}`).join('\n')}`;
+      return `Necessidades de evolução:\n${necessidades.map((n, i) => `${i + 1}. [${n.status}] ${n.pedido}`).join('\n')}`;
     }
 
     case 'registrar_necessidade': {
@@ -588,9 +601,9 @@ async function executarFuncao(nome, args, userId) {
       const registro = await databaseService.registrarNecessidade(userId, pedido, contexto);
       if (registro) {
         await databaseService.logOoda('acao', `Necessidade: ${pedido}`, userId, 'sucesso');
-        return `Necessidade registrada: ${pedido}`;
+        return `✅ Necessidade registrada: ${pedido}`;
       }
-      return 'Erro ao registrar necessidade.';
+      return '❌ Erro ao registrar necessidade.';
     }
 
     default:
@@ -598,53 +611,55 @@ async function executarFuncao(nome, args, userId) {
   }
 }
 
-// --- 7. PROMPT DINÂMICO ---
+// --- PROMPT ---
 function buildSystemInstruction(context, skills) {
-  const ferramentasBase = TOOLS_BASE.map((t) => `• ${t.name} — ${t.description}`).join('\n');
+  const ferramentasTexto = TOOLS.map((t) => `• ${t.name} — ${t.description}`).join('\n');
 
   const skillsTexto = skills.length > 0
-    ? skills.map((s) => `• ${s.nome} (${s.categoria}) — ${s.descricao}\n  Gatilhos: ${s.gatilhos}\n  Conhecimento: ${s.conhecimento}`).join('\n\n')
+    ? skills.map((s) => `• ${s.nome} (${s.categoria}) — ${s.descricao}`).join('\n')
     : 'Nenhuma skill dinâmica registrada ainda.';
 
   const varredura = [
     `Data: ${context.agora}`,
     `Perfil: ${context.perfil}`,
     `Empresas: ${context.empresas}`,
-    `Chamados: ${context.chamados}`,
+    `Chamados abertos: ${context.chamados}`,
     `Ideias: ${context.ideias}`,
     `Memórias: ${context.memoria}`,
   ].join('\n');
 
   return `
-Você é Charlene, extensão operacional do Chefe.
+Você é Charlene, extensão operacional e estratégica do Chefe.
 
 VARREDURA ATUAL:
 ${varredura}
 
-FERRAMENTAS BASE (sempre disponíveis):
-${ferramentasBase}
+FERRAMENTAS DISPONÍVEIS:
+${ferramentasTexto}
 
-SKILLS DINÂMICAS (aprendidas):
+SKILLS DINÂMICAS:
 ${skillsTexto}
 
-REGRAS:
-1. Use as ferramentas para executar ações. Nunca peça comandos.
-2. Se não souber fazer algo, chame "registrar_necessidade" e admita honestamente.
-3. Aplique o conhecimento das skills dinâmicas quando relevante.
-4. Seja direta, leal, antecipatória. Chame de "Chefe".
-5. Não use markdown. Texto corrido.
+REGRAS ABSOLUTAS:
+1. NUNCA peça para o Chefe digitar um comando. Se existe ferramenta, EXECUTE.
+2. NUNCA diga que fez algo que não fez.
+3. Se não souber fazer, chame "registrar_necessidade" e admita honestamente.
+4. Para criar chamado, SEMPRE preencha empresa_nome, equipamento_nome e descricao.
+5. Seja direta, leal, antecipatória. Chame de "Chefe".
+6. Não use markdown. Texto corrido.
+7. A decisão final é sempre do Chefe.
 `;
 }
 
-// --- 8. GEMINI ---
+// --- GEMINI ---
 const GEMINI_URL = () =>
   `https://generativelanguage.googleapis.com/v1beta/models/${config.geminiModel}:generateContent?key=${config.geminiApiKey}`;
 
-async function chamarGemini(systemInstruction, contents, tools) {
+async function chamarGemini(systemInstruction, contents) {
   const body = {
     systemInstruction: { parts: [{ text: systemInstruction }] },
     contents,
-    tools: [{ functionDeclarations: tools }],
+    tools: [{ functionDeclarations: TOOLS }],
     toolConfig: { functionCallingConfig: { mode: 'AUTO' } },
     generationConfig: { temperature: 0.3, maxOutputTokens: 1500 },
   };
@@ -667,14 +682,14 @@ async function chamarGemini(systemInstruction, contents, tools) {
   }
 }
 
-// --- 9. ORQUESTRADOR ---
+// --- ORQUESTRADOR ---
 async function conversarComCharlene(mensagem, context, userId) {
   const skills = await databaseService.getSkills();
   const systemInstruction = buildSystemInstruction(context, skills);
 
   let resposta = await chamarGemini(systemInstruction, [
     { role: 'user', parts: [{ text: mensagem }] },
-  ], TOOLS_BASE);
+  ]);
 
   const maxTentativas = 6;
 
@@ -701,16 +716,16 @@ async function conversarComCharlene(mensagem, context, userId) {
       { role: 'user', parts: [{ text: mensagem }] },
       { role: 'model', parts },
       { role: 'user', parts: functionResponses.map((fr) => ({ functionResponse: fr })) },
-    ], TOOLS_BASE);
+    ]);
   }
 
   return 'Limite de processamento atingido. Verifique as ações.';
 }
 
-// --- 10. HANDLER ---
+// --- HANDLER ---
 module.exports = async function handler(req, res) {
   if (req.method !== 'POST') {
-    return res.status(200).json({ ok: true, message: 'Charlene v6.0 online.' });
+    return res.status(200).json({ ok: true, message: 'Charlene v6.1 online.' });
   }
 
   const update = req.body;
@@ -747,7 +762,7 @@ module.exports = async function handler(req, res) {
 
     const memoriaFormatada = memorias.map((m) => `• ${m.conteudo}`).join('\n');
     const chamadosResumo = chamadosAbertos.length > 0
-      ? chamadosAbertos.map((c) => `[${c.id}] ${c.descricao || '?'}`).join('; ')
+      ? chamadosAbertos.map((c) => `[${c.id}] ${c.empresa_nome} — ${c.descricao?.substring(0, 40)}`).join('; ')
       : 'Nenhum.';
     const ideiasResumo = ideiasPendentes.length > 0
       ? ideiasPendentes.map((i) => i.titulo).join('; ')
