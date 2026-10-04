@@ -1,8 +1,5 @@
 // ============================================================
-// CHARLENE v6.1 — AJUSTE PARA TABELA chamados REAL
-// ============================================================
-// Correção: a tabela exige equipamento_nome e data_criacao
-// como obrigatórios. Agora o createTicket envia tudo.
+// CHARLENE v6.2 — OTIMIZADA PARA ECONOMIA DE TOKENS
 // ============================================================
 
 const { createClient } = require('@supabase/supabase-js');
@@ -137,7 +134,6 @@ const databaseService = {
     return data;
   },
 
-  // AJUSTADO: envia todos os campos obrigatórios da tabela chamados
   createTicket: async ({ empresa_nome, equipamento_nome, descricao, tipo, solicitante, prioridade }) => {
     const payload = {
       empresa_nome: empresa_nome || 'Não informada',
@@ -349,12 +345,12 @@ const databaseService = {
 const TOOLS = [
   {
     name: 'mapear_sistema',
-    description: 'Faz uma varredura completa do sistema.',
+    description: 'Faz uma varredura completa do sistema. Busca chamados, empresas, memórias e ideias.',
     parameters: { type: 'object', properties: {} },
   },
   {
     name: 'listar_chamados',
-    description: 'Lista os chamados abertos.',
+    description: 'Lista os chamados abertos no banco de dados.',
     parameters: { type: 'object', properties: {} },
   },
   {
@@ -385,12 +381,12 @@ const TOOLS = [
   },
   {
     name: 'listar_empresas',
-    description: 'Lista as empresas cadastradas.',
+    description: 'Lista as empresas cadastradas no sistema.',
     parameters: { type: 'object', properties: {} },
   },
   {
     name: 'criar_empresa',
-    description: 'Cria uma nova empresa.',
+    description: 'Cria uma nova empresa no sistema.',
     parameters: {
       type: 'object',
       properties: {
@@ -401,17 +397,17 @@ const TOOLS = [
   },
   {
     name: 'mostrar_plano_dia',
-    description: 'Mostra o plano do dia.',
+    description: 'Mostra o plano do dia do usuário.',
     parameters: { type: 'object', properties: {} },
   },
   {
     name: 'listar_ideias',
-    description: 'Lista ideias pendentes.',
+    description: 'Lista ideias de negócios e projetos pendentes.',
     parameters: { type: 'object', properties: {} },
   },
   {
     name: 'salvar_ideia',
-    description: 'Salva uma ideia.',
+    description: 'Salva uma nova ideia no banco de dados.',
     parameters: {
       type: 'object',
       properties: {
@@ -422,33 +418,33 @@ const TOOLS = [
   },
   {
     name: 'salvar_memoria',
-    description: 'Salva na memória essencial.',
+    description: 'Salva regras, preferências ou dados importantes na memória essencial.',
     parameters: {
       type: 'object',
       properties: {
-        conteudo: { type: 'string', description: 'Texto a memorizar' },
+        conteudo: { type: 'string', description: 'Texto ou regra a memorizar para o futuro' },
       },
       required: ['conteudo'],
     },
   },
   {
     name: 'ver_memorias',
-    description: 'Mostra memórias salvas.',
+    description: 'Mostra todas as memórias e regras salvas no banco de dados.',
     parameters: { type: 'object', properties: {} },
   },
   {
     name: 'listar_necessidades',
-    description: 'Lista chamados de evolução.',
+    description: 'Lista chamados de evolução e habilidades faltantes.',
     parameters: { type: 'object', properties: {} },
   },
   {
     name: 'registrar_necessidade',
-    description: 'Registra o que a Charlene ainda não sabe fazer.',
+    description: 'Registra o que a Charlene ainda não sabe fazer para futura implementação.',
     parameters: {
       type: 'object',
       properties: {
-        pedido: { type: 'string', description: 'O que falta aprender' },
-        contexto: { type: 'string', description: 'Contexto adicional' },
+        pedido: { type: 'string', description: 'O que falta aprender ou fazer' },
+        contexto: { type: 'string', description: 'Contexto adicional sobre a limitação' },
       },
       required: ['pedido'],
     },
@@ -485,11 +481,10 @@ async function executarFuncao(nome, args, userId) {
       const chamados = await databaseService.getOpenTickets(20);
       if (chamados.length === 0) return 'Nenhum chamado aberto.';
       return `Chamados abertos (${chamados.length}):\n${chamados
-        .map((c, i) => `${i + 1}. [ID ${c.id}] ${c.empresa_nome} — ${c.equipamento_nome} — ${c.descricao?.substring(0, 50) || '?'}`)
+        .map((c, i) => `${i + 1}. [ID ${c.id}]${c.empresa_nome} — ${c.equipamento_nome} —${c.descricao?.substring(0, 50) || '?'}`)
         .join('\n')}`;
     }
 
-    // AJUSTADO: envia os 3 campos obrigatórios
     case 'criar_chamado': {
       const empresa_nome = args?.empresa_nome || '';
       const equipamento_nome = args?.equipamento_nome || 'Sistema Charlene';
@@ -540,7 +535,7 @@ async function executarFuncao(nome, args, userId) {
     case 'listar_empresas': {
       const empresas = await databaseService.getCompanies(50);
       if (empresas.length === 0) return 'Nenhuma empresa cadastrada.';
-      return `Empresas:\n${empresas.map((e, i) => `${i + 1}. ${e.nome}`).join('\n')}`;
+      return `Empresas:\n${empresas.map((e, i) => `${i + 1}.${e.nome}`).join('\n')}`;
     }
 
     case 'criar_empresa': {
@@ -563,7 +558,7 @@ async function executarFuncao(nome, args, userId) {
     case 'listar_ideias': {
       const ideias = await databaseService.getPendingIdeas(userId, 10);
       if (ideias.length === 0) return 'Nenhuma ideia registrada.';
-      return `Ideias pendentes:\n${ideias.map((i, idx) => `${idx + 1}. ${i.titulo}`).join('\n')}`;
+      return `Ideias pendentes:\n${ideias.map((i, idx) => `${idx + 1}.${i.titulo}`).join('\n')}`;
     }
 
     case 'salvar_ideia': {
@@ -591,7 +586,7 @@ async function executarFuncao(nome, args, userId) {
     case 'listar_necessidades': {
       const necessidades = await databaseService.listarNecessidades(userId, 20);
       if (necessidades.length === 0) return 'Sem necessidades registradas.';
-      return `Necessidades de evolução:\n${necessidades.map((n, i) => `${i + 1}. [${n.status}] ${n.pedido}`).join('\n')}`;
+      return `Necessidades de evolução:\n${necessidades.map((n, i) => `${i + 1}. [${n.status}]${n.pedido}`).join('\n')}`;
     }
 
     case 'registrar_necessidade': {
@@ -611,28 +606,24 @@ async function executarFuncao(nome, args, userId) {
   }
 }
 
-// --- PROMPT ---
+// --- PROMPT OTIMIZADO ---
 function buildSystemInstruction(context, skills) {
   const ferramentasTexto = TOOLS.map((t) => `• ${t.name} — ${t.description}`).join('\n');
 
   const skillsTexto = skills.length > 0
     ? skills.map((s) => `• ${s.nome} (${s.categoria}) — ${s.descricao}`).join('\n')
-    : 'Nenhuma skill dinâmica registrada ainda.';
-
-  const varredura = [
-    `Data: ${context.agora}`,
-    `Perfil: ${context.perfil}`,
-    `Empresas: ${context.empresas}`,
-    `Chamados abertos: ${context.chamados}`,
-    `Ideias: ${context.ideias}`,
-    `Memórias: ${context.memoria}`,
-  ].join('\n');
+    : 'Nenhuma skill dinâmica ativa.';
 
   return `
-Você é Charlene, extensão operacional e estratégica do Chefe.
+Identidade: Charlene, núcleo executivo do ecossistema de Diego.
+Objetivo: Processamento de comandos focado em execução silenciosa e economia extrema de tokens.
 
-VARREDURA ATUAL:
-${varredura}
+Data atual: ${context.agora}
+Histórico da conversa:
+${context.historico}
+
+Perfil do Chefe: ${context.perfil}
+Dados base: ${context.dados}
 
 FERRAMENTAS DISPONÍVEIS:
 ${ferramentasTexto}
@@ -640,14 +631,13 @@ ${ferramentasTexto}
 SKILLS DINÂMICAS:
 ${skillsTexto}
 
-REGRAS ABSOLUTAS:
-1. NUNCA peça para o Chefe digitar um comando. Se existe ferramenta, EXECUTE.
-2. NUNCA diga que fez algo que não fez.
-3. Se não souber fazer, chame "registrar_necessidade" e admita honestamente.
-4. Para criar chamado, SEMPRE preencha empresa_nome, equipamento_nome e descricao.
-5. Seja direta, leal, antecipatória. Chame de "Chefe".
-6. Não use markdown. Texto corrido.
-7. A decisão final é sempre do Chefe.
+DIRETRIZES DE EFICIÊNCIA ABSOLUTA:
+1. Respostas de Alta Densidade: Confirme a execução de forma direta. Zero saudações, zero reflexões, zero explicações do seu processo interno.
+2. Execução Operacional: NUNCA peça para o Chefe digitar um comando. Se existe ferramenta, EXECUTE você mesma.
+3. Consulta Sob Demanda (Economia): NÃO adivinhe dados. Se precisar saber as empresas, memórias ou chamados, USE as ferramentas antes de responder.
+4. Rigor nos Dados: Para criar chamado, SEMPRE exija/preencha empresa_nome, equipamento_nome e descricao. Se faltar algo, faça apenas UMA pergunta curta.
+5. Formato: Não use markdown. Use texto corrido militar. Chame o usuário de "Chefe".
+6. Evolução: Se o Chefe pedir algo que não tem ferramenta, execute "registrar_necessidade" imediatamente e avise.
 `;
 }
 
@@ -722,10 +712,10 @@ async function conversarComCharlene(mensagem, context, userId) {
   return 'Limite de processamento atingido. Verifique as ações.';
 }
 
-// --- HANDLER ---
+// --- HANDLER OTIMIZADO ---
 module.exports = async function handler(req, res) {
   if (req.method !== 'POST') {
-    return res.status(200).json({ ok: true, message: 'Charlene v6.1 online.' });
+    return res.status(200).json({ ok: true, message: 'Charlene v6.2 online.' });
   }
 
   const update = req.body;
@@ -745,38 +735,22 @@ module.exports = async function handler(req, res) {
 
     await telegramService.sendChatAction(chatId, 'typing');
 
-    const [contexto, empresas, perfil, dadosPessoais, memorias, chamadosAbertos, ideiasPendentes] =
-      await Promise.all([
-        databaseService.getRecentContext(userId, 10),
-        databaseService.getCompanies(50),
-        safeQuery(() => databaseService.getPerfil(userId), 'Não definido'),
-        safeQuery(() => databaseService.getDadosPessoais(userId), 'Não definido'),
-        safeQuery(() => databaseService.getMemory(userId, 10), []),
-        databaseService.getOpenTickets(20),
-        safeQuery(() => databaseService.getPendingIdeas(userId, 10), []),
-      ]);
+    // CARREGAMENTO ENXUTO: Apenas dados de contexto rápido, sem puxar tabelas inteiras na raiz.
+    const [contexto, perfil, dadosPessoais] = await Promise.all([
+      databaseService.getRecentContext(userId, 10),
+      safeQuery(() => databaseService.getPerfil(userId), 'Não definido'),
+      safeQuery(() => databaseService.getDadosPessoais(userId), 'Não definido'),
+    ]);
 
     const historicoFormatado = contexto
       .map((c) => `[${c.tipo === 'usuario' ? 'Chefe' : 'Charlene'}] ${c.mensagem}`)
       .join('\n');
 
-    const memoriaFormatada = memorias.map((m) => `• ${m.conteudo}`).join('\n');
-    const chamadosResumo = chamadosAbertos.length > 0
-      ? chamadosAbertos.map((c) => `[${c.id}] ${c.empresa_nome} — ${c.descricao?.substring(0, 40)}`).join('; ')
-      : 'Nenhum.';
-    const ideiasResumo = ideiasPendentes.length > 0
-      ? ideiasPendentes.map((i) => i.titulo).join('; ')
-      : 'Nenhuma.';
-
     const context = {
       agora: turnDateBrasil(),
       historico: historicoFormatado || 'Sem histórico.',
-      memoria: memoriaFormatada || 'Sem memórias.',
-      empresas: empresas.map((e) => e.nome).join(', ') || 'Nenhuma.',
       perfil: perfil,
       dados: dadosPessoais,
-      chamados: chamadosResumo,
-      ideias: ideiasResumo,
     };
 
     const resposta = await conversarComCharlene(text, context, userId);
