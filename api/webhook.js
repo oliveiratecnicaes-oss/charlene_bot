@@ -1,4 +1,4 @@
-// CHARLENE v7.0 — OTIMIZADA PARA VELOCIDADE E TOOL CALLING
+// CHARLENE v7.1 — OTIMIZADA PARA VELOCIDADE E TOOL CALLING (ESCOPOS ISOLADOS)
 // ============================================================
 
 const { createClient } = require('@supabase/supabase-js');
@@ -37,14 +37,14 @@ const telegramService = {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ chat_id: chatId, action }),
-    }).catch(() => {}); // Fire and forget para não atrasar a fila
+    }).catch(() => {}); 
   },
 };
 
 // --- BANCO DE DADOS (SUPABASE) ---
 const db = {
   saveMessage: (userId, mensagem, tipo) => supabase.from('conversas_charlene').insert({ usuario_id: userId, mensagem, tipo }),
-  getRecentContext: async (userId, limit = 4) => { // REDUZIDO PARA 4 PARA POUPAR TOKENS
+  getRecentContext: async (userId, limit = 4) => { 
     const { data } = await supabase.from('conversas_charlene').select('mensagem, tipo').eq('usuario_id', userId).order('criado_em', { ascending: false }).limit(limit);
     return data ? data.reverse() : [];
   },
@@ -52,7 +52,6 @@ const db = {
   getTicketById: async (id) => (await supabase.from('chamados').select('*').eq('id', id).maybeSingle()).data || null,
   closeTicket: async (id) => (await supabase.from('chamados').update({ status: 'fechado' }).eq('id', id).select().single()).data || null,
   
-  // INJEÇÃO DIRETA DO JSON DE O.S. (Alinhado com a task do Agente Che)
   createTicket: async ({ empresa_nome, equipamento_nome, descricao, tipo, solicitante, prioridade }) => {
     const payload = {
       empresa_nome: empresa_nome || 'Não informada',
@@ -112,54 +111,67 @@ const TOOLS = [
   { name: 'registrar_necessidade', description: 'Registra limitação da IA.', parameters: { type: 'object', properties: { pedido: { type: 'string' }, contexto: { type: 'string' } }, required: ['pedido'] } }
 ];
 
-// --- EXECUTOR DE FUNÇÕES ---
+// --- EXECUTOR DE FUNÇÕES (CORRIGIDO) ---
 async function executarFuncao(nome, args, userId) {
   console.log(`[TOOL CALL] ${nome} - Args:`, args);
 
   switch (nome) {
-    case 'mapear_sistema':
+    case 'mapear_sistema': {
       const [ch, emp, mem] = await Promise.all([db.getOpenTickets(), db.getCompanies(), safeQuery(() => db.getMemory(userId), [])]);
       return `Mapeamento: ${ch.length} Chamados, ${emp.length} Empresas, ${mem.length} Memórias.`;
-    case 'listar_chamados':
+    }
+    case 'listar_chamados': {
       const abertos = await db.getOpenTickets();
       return abertos.length ? `Chamados:\n${abertos.map((c, i) => `${i + 1}. [ID ${c.id}] ${c.empresa_nome} - ${c.equipamento_nome}`).join('\n')}` : 'Nenhum chamado aberto.';
-    case 'criar_chamado':
+    }
+    case 'criar_chamado': {
       const novoChamado = await db.createTicket(args);
       if (novoChamado) {
         db.logOoda('acao', `Criar O.S.: ${args.descricao}`, userId, 'sucesso');
         return `✅ Chamado [${novoChamado.id}] aberto com sucesso para ${args.empresa_nome}.`;
       }
       return '❌ Falha ao injetar JSON no banco.';
-    case 'fechar_chamado':
+    }
+    case 'fechar_chamado': {
       const targetId = args.id_ou_numero;
-      const alvo = await db.getTicketById(targetId); // Simplificado para usar apenas o ID real por precisão
+      const alvo = await db.getTicketById(targetId); 
       if (!alvo) return `O.S. ${targetId} não encontrada.`;
       const fechado = await db.closeTicket(alvo.id);
       return fechado ? `✅ O.S. ${alvo.id} encerrada.` : `❌ Erro ao fechar O.S. ${alvo.id}.`;
-    case 'listar_empresas':
+    }
+    case 'listar_empresas': {
       const empresas = await db.getCompanies();
       return empresas.length ? empresas.map((e, i) => `${i + 1}. ${e.nome}`).join('\n') : 'Sem empresas.';
-    case 'criar_empresa':
+    }
+    case 'criar_empresa': {
       const emp = await db.createCompany(args.nome);
       return emp ? `✅ Empresa ${emp.nome} criada (ID: ${emp.id})` : `❌ Erro ao criar empresa.`;
-    case 'mostrar_plano_dia':
+    }
+    case 'mostrar_plano_dia': {
       const plano = await db.getDailyPlan(userId);
       return plano ? plano.conteudo : 'Sem plano para hoje.';
-    case 'listar_ideias':
+    }
+    case 'listar_ideias': {
       const ideias = await db.getPendingIdeas(userId);
       return ideias.length ? ideias.map((i, idx) => `${idx + 1}. ${i.titulo}`).join('\n') : 'Sem ideias.';
-    case 'salvar_ideia':
+    }
+    case 'salvar_ideia': {
       return await db.saveIdea(userId, args.titulo) ? `✅ Ideia salva.` : `❌ Erro.`;
-    case 'salvar_memoria':
+    }
+    case 'salvar_memoria': {
       return await db.saveMemory(userId, args.conteudo) ? `✅ Memorizado.` : `❌ Erro.`;
-    case 'ver_memorias':
+    }
+    case 'ver_memorias': {
       const mems = await db.getMemory(userId);
       return mems.length ? mems.map(m => `• ${m.conteudo}`).join('\n') : 'Sem memórias.';
-    case 'listar_necessidades':
+    }
+    case 'listar_necessidades': {
       const nec = await db.listarNecessidades(userId);
       return nec.length ? nec.map((n, i) => `${i + 1}. [${n.status}] ${n.pedido}`).join('\n') : 'Sem necessidades.';
-    case 'registrar_necessidade':
+    }
+    case 'registrar_necessidade': {
       return await db.registrarNecessidade(userId, args.pedido, args.contexto) ? `✅ Necessidade anotada.` : `❌ Erro.`;
+    }
     default:
       return `Ferramenta ${nome} não existe.`;
   }
@@ -170,7 +182,7 @@ async function processarIA(mensagem, context, userId, fsPrompt = null) {
   const systemInstruction = fsPrompt || `Identidade: Charlene. Dados: ${JSON.stringify(context)}`;
   
   let history = [{ role: 'user', parts: [{ text: mensagem }] }];
-  const MAX_LOOPS = 3; // Evita timeout da Vercel (antes era 6)
+  const MAX_LOOPS = 3; 
 
   for (let step = 0; step < MAX_LOOPS; step++) {
     const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${config.geminiModel}:generateContent?key=${config.geminiApiKey}`, {
@@ -190,13 +202,10 @@ async function processarIA(mensagem, context, userId, fsPrompt = null) {
     const parts = response.candidates[0].content.parts;
     const calls = parts.filter(p => p.functionCall).map(p => p.functionCall);
 
-    // Se não há ferramenta para chamar, é a resposta final
     if (calls.length === 0) return parts.map(p => p.text).join('\n').trim();
 
-    // Adiciona o que a IA quis chamar no histórico
     history.push({ role: 'model', parts });
 
-    // Executa as ferramentas em paralelo para ganhar tempo
     const toolResults = await Promise.all(calls.map(async (call) => ({
       functionResponse: {
         name: call.name,
@@ -204,16 +213,15 @@ async function processarIA(mensagem, context, userId, fsPrompt = null) {
       }
     })));
 
-    // Devolve o resultado pro modelo
     history.push({ role: 'user', parts: toolResults });
   }
 
-  return 'Ação concluída no banco de dados.'; // Resposta de fallback caso atinja limite de loops
+  return 'Ação concluída no banco de dados.'; 
 }
 
 // --- MAIN HANDLER (VERCEL) ---
 module.exports = async function handler(req, res) {
-  if (req.method !== 'POST') return res.status(200).json({ ok: true, status: 'Charlene v7.0' });
+  if (req.method !== 'POST') return res.status(200).json({ ok: true, status: 'Charlene v7.1' });
 
   const message = req.body.message || req.body.edited_message;
   if (!message || !message.text) return res.status(200).json({ ok: true });
@@ -223,23 +231,17 @@ module.exports = async function handler(req, res) {
   const userId = String(message.from.id);
 
   try {
-    // Para evitar timeout, envia 200 OK cedo se sua infra permitir execução em background (edge). 
-    // Em Serverless Node padrão da Vercel, seguramos a request mas com rotinas otimizadas.
     telegramService.sendChatAction(chatId, 'typing');
 
-    // 1. Gravação Assíncrona Rápida
     db.saveMessage(userId, text, 'usuario');
     db.logOoda('observar', text.slice(0, 50), userId);
 
-    // 2. Busca de Contexto Paralelizada
     const [historico, perfil, dados] = await Promise.all([
       db.getRecentContext(userId),
       safeQuery(() => supabase.from('perfil_usuario').select('conteudo').eq('usuario_id', userId).single().then(r => r.data?.conteudo), ''),
       safeQuery(() => supabase.from('dados_usuario').select('conteudo').eq('usuario_id', userId).single().then(r => r.data?.conteudo), '')
     ]);
 
-    // O FS Prompt precisa ser lido do arquivo externo se você estiver usando Next.js fs, 
-    // mas mantive a estrutura dinâmica baseada no contexto aqui
     const promptString = `
     (Você é Charlene. Regras: Seja curta, militar. Use ferramentas para criar O.S. diretamente no banco, NUNCA cospe JSON no texto)
     Data: ${turnDateBrasil()}
@@ -247,7 +249,6 @@ module.exports = async function handler(req, res) {
     Chefe: ${perfil} - Dados: ${dados}
     `;
 
-    // 3. Processamento e Resposta
     const resposta = await processarIA(text, {}, userId, promptString);
 
     await Promise.all([
