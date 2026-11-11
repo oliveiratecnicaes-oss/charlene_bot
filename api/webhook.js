@@ -1,4 +1,4 @@
-// CHARLENE v7.1 — OTIMIZADA PARA VELOCIDADE E TOOL CALLING (ESCOPOS ISOLADOS)
+// CHARLENE v7.2 — OTIMIZADA PARA VELOCIDADE E TOOL CALLING (CORREÇÃO DE PROMISES)
 // ============================================================
 
 const { createClient } = require('@supabase/supabase-js');
@@ -78,7 +78,15 @@ const db = {
   listarNecessidades: async (userId) => (await supabase.from('necessidades_charlene').select('id, pedido, status').eq('usuario_id', userId).order('criado_em', { ascending: false }).limit(10)).data || [],
   registrarNecessidade: async (userId, pedido, contexto) => (await supabase.from('necessidades_charlene').insert({ usuario_id: userId, pedido, contexto: contexto || '', status: 'aberto' }).select().single()).data || null,
   getSkills: async () => (await supabase.from('skills_charlene').select('*').eq('ativo', true)).data || [],
-  logOoda: (etapa, detalhe, userId, resultado = '') => supabase.from('eventos_ooda').insert({ usuario_id: userId, etapa, detalhe, resultado }).catch(() => {})
+  
+  // CORREÇÃO DO LOGOODA: Função async sem o .catch() que causava quebra
+  logOoda: async (etapa, detalhe, userId, resultado = '') => {
+    try {
+      await supabase.from('eventos_ooda').insert({ usuario_id: userId, etapa, detalhe, resultado });
+    } catch (e) {
+      console.error('Erro silencioso no logOoda:', e.message);
+    }
+  }
 };
 
 // --- DECLARAÇÃO DE FERRAMENTAS ---
@@ -111,7 +119,7 @@ const TOOLS = [
   { name: 'registrar_necessidade', description: 'Registra limitação da IA.', parameters: { type: 'object', properties: { pedido: { type: 'string' }, contexto: { type: 'string' } }, required: ['pedido'] } }
 ];
 
-// --- EXECUTOR DE FUNÇÕES (CORRIGIDO) ---
+// --- EXECUTOR DE FUNÇÕES ---
 async function executarFuncao(nome, args, userId) {
   console.log(`[TOOL CALL] ${nome} - Args:`, args);
 
@@ -127,7 +135,7 @@ async function executarFuncao(nome, args, userId) {
     case 'criar_chamado': {
       const novoChamado = await db.createTicket(args);
       if (novoChamado) {
-        db.logOoda('acao', `Criar O.S.: ${args.descricao}`, userId, 'sucesso');
+        await db.logOoda('acao', `Criar O.S.: ${args.descricao}`, userId, 'sucesso');
         return `✅ Chamado [${novoChamado.id}] aberto com sucesso para ${args.empresa_nome}.`;
       }
       return '❌ Falha ao injetar JSON no banco.';
@@ -221,7 +229,7 @@ async function processarIA(mensagem, context, userId, fsPrompt = null) {
 
 // --- MAIN HANDLER (VERCEL) ---
 module.exports = async function handler(req, res) {
-  if (req.method !== 'POST') return res.status(200).json({ ok: true, status: 'Charlene v7.1' });
+  if (req.method !== 'POST') return res.status(200).json({ ok: true, status: 'Charlene v7.2' });
 
   const message = req.body.message || req.body.edited_message;
   if (!message || !message.text) return res.status(200).json({ ok: true });
@@ -233,8 +241,8 @@ module.exports = async function handler(req, res) {
   try {
     telegramService.sendChatAction(chatId, 'typing');
 
-    db.saveMessage(userId, text, 'usuario');
-    db.logOoda('observar', text.slice(0, 50), userId);
+    await db.saveMessage(userId, text, 'usuario');
+    await db.logOoda('observar', text.slice(0, 50), userId);
 
     const [historico, perfil, dados] = await Promise.all([
       db.getRecentContext(userId),
